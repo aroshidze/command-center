@@ -1,0 +1,56 @@
+# Secrets. Never commit these. The hub's tokens and the database URL live here and nowhere else.
+.env
+.env.local
+.env*.local
+
+# The CLI's per-machine config: contains the agent token.
+.command-center/
+
+node_modules/
+.next/
+out/
+build/
+dist/
+*.log
+.DS_Store
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# Local scratch from the proof runs
+tests/.out/
+
+.vercel
+
+# Everything env-shaped is a secret BY DEFAULT — a new `.env.something` should be ignored without anyone
+# having to remember to add it. This line is why `CC_ALLOW_FAULT_INJECTION` and a production connection
+# string have never reached a commit.
+.env*
+
+# ...EXCEPT the example, which is the one env file that must ship.
+#
+# THIS LINE WAS MISSING AND IT BROKE THE FIRST COMMAND OF THE SETUP GUIDE. `.env*` above matched
+# `.env.example`, so it had never been committed — and README's opening instruction is
+# `cp .env.example .env.local`, which on a fresh clone fails with "No such file or directory". Nobody had
+# executed the first step of their own setup path from a clean checkout; on the machine that wrote it, the
+# file was simply there, untracked. Verified by cloning this repository into a temporary directory and
+# looking, which is the only way that class of defect is ever found.
+#
+# It contains no values, only variable names and the reasons for them. It is checked by nothing automatic,
+# so: if you add a variable the hub reads, it goes in there.
+!.env.example
+
+# Screenshots are regenerable (npm run shots), but the "before" set cannot be
+# regenerated once the interface changes, so tests/shots IS committed on purpose.
+
+# The permission relay's own switch, and it must stay per-clone.
+#
+# `cc approvals on` writes .claude/settings.json with a PermissionRequest hook. docs/SETUP.md promises the
+# relay is "off in every project until somebody runs `cc approvals on` in that folder" — so committing this
+# file would make that sentence false for everyone who clones, and would hand a fresh clone a hook that lets
+# whoever holds the web token answer tool calls. Found before publishing, by checking what git would take:
+# the file was untracked and unignored, which is one `git add -A` away from shipping behaviour nobody chose.
+#
+# It carries no token, so this is about DEFAULTS rather than secrecy. A team that genuinely wants a shared
+# relay can force-add it and delete this line, deliberately.
+.claude/

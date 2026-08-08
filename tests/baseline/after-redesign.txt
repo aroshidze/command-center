@@ -1,0 +1,168 @@
+
+Measuring the rendered interface of http://localhost:3939
+
+  phone    390x844
+     21 tasks in 1 column(s) · page 3888px (4.6 screens) · 77 tab stops · 1 primary buttons
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   L6 a phone gets exactly one column
+            1 column(s)
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   K4 a covered queue cannot be tabbed into
+            nothing behind the panel is focusable
+     ok   P1 what you have finished is visible without scrolling
+            1 of 1 progress figure(s) start within the first screen
+
+  tablet   834x1112
+     21 tasks in 1 column(s) · page 2623px (2.4 screens) · 77 tab stops · 1 primary buttons
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   P1 what you have finished is visible without scrolling
+            1 of 1 progress figure(s) start within the first screen
+
+  laptop   1280x900
+     21 tasks in 1 column(s) · page 1807px (2 screens) · 77 tab stops · 1 primary buttons
+     ok   L1 every section fills the column it sits in
+            narrowest section fills 100% of its column (asks: 748px of 748px)
+     ok   L2 an opened item fills the container it was given
+            content spans 348px of a 348px container (100%)
+     ok   L3 tasks are visible without scrolling
+            6 of 21 tasks start within the first screen
+     ok   L4 the queue is not an endless scroll
+            the longest scroller is 2.01 screens tall
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   P1 what you have finished is visible without scrolling
+            1 of 1 progress figure(s) start within the first screen
+     ok   P6 no scrollbar is a fat default grey bar
+            2 scrolling region(s): section at 10px, pane at 10px
+
+  monitor  1920x1080
+     21 tasks in 1 column(s) · page 1890px (1.8 screens) · 77 tab stops · 1 primary buttons
+     ok   L1 every section fills the column it sits in
+            narrowest section fills 100% of its column (asks: 911px of 911px)
+     ok   L2 an opened item fills the container it was given
+            content spans 425px of a 425px container (100%)
+     ok   L3 tasks are visible without scrolling
+            9 of 21 tasks start within the first screen
+     ok   L4 the queue is not an endless scroll
+            the longest scroller is 1.75 screens tall
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   K1 nothing pretends to be a button
+            every control with a button role is a real <button>
+     ok   K2 keyboard focus is visible on the dark surface
+            2px @ 12.59:1 — Skip to your turn
+            2px @ 12.59:1 — Skip to decisions
+            2px @ 12.59:1 — 4 decisions blocking an agen
+            2px @ 12.59:1 — 21 tasks · about 12h 20m
+            2px @ 12.59:1 — 9 done · 2 decided
+            2px @ 10.89:1 — 09:00  ·  suggested
+            2px @ 10.89:1 — 18:00
+            2px @ 10.89:1 — + Add a condition or comment
+            2px @ 10.89:1 — Not now — stop asking
+            2px @ 10.89:1 — Reuse product-images  ·  sug
+            2px @ 10.89:1 — Create a catalogue bucketHal
+            2px @ 10.89:1 — Put them behind the CDN inst
+            2px @ 10.89:1 — Hold the import until the st
+            2px @ 10.89:1 — + Add a condition or comment
+     ok   K3 a keyboard reaches the task list quickly
+            3 keystroke(s) to focus a task
+     ok   P1 what you have finished is visible without scrolling
+            1 of 1 progress figure(s) start within the first screen
+     ok   P2 every finished item can be listed, not just the last few
+            9 finished item(s) listed
+     ok   P3 a completion says what became true, not just its title
+            7 of 9 listed completions quote what they achieved
+     ok   P4 every progress figure is a control, and finished work can be undone
+            all 4 figures are controls, and all 9 finished rows can be re-opened
+     ok   P5 every stated target is arithmetically true, and nothing names a streak
+            3 stated target(s), every one exactly its own arithmetic; no streak, no loss framing
+     ok   P9 a task waiting on someone else for days can be chased
+            all 1 long-waiting task(s) offer a way to chase the agent
+     ok   P8 the queue can be narrowed to what fits a short gap, truthfully
+            filtered to 6 task(s), every one within 10m
+     ok   P7 nothing drawn inside a graphic escapes it
+            all 1 graphic(s) keep their contents inside
+     ok   P6 no scrollbar is a fat default grey bar
+            2 scrolling region(s): section at 10px, pane at 10px
+     ok   A1 the save-state message is announced
+            7 of 7 save-state elements are in a live region
+     ok   A2 every field has a real label
+            all 2 fields labelled
+
+  ultrawide 2560x1440
+     21 tasks in 1 column(s) · page 2013px (1.4 screens) · 77 tab stops · 1 primary buttons
+     ok   L1 every section fills the column it sits in
+            narrowest section fills 100% of its column (asks: 1090px of 1090px)
+     ok   L2 an opened item fills the container it was given
+            content spans 568px of a 568px container (100%)
+     ok   L3 tasks are visible without scrolling
+            15 of 21 tasks start within the first screen
+     ok   L4 the queue is not an endless scroll
+            the longest scroller is 1.4 screens tall
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   P1 what you have finished is visible without scrolling
+            1 of 1 progress figure(s) start within the first screen
+     ok   P6 no scrollbar is a fat default grey bar
+            2 scrolling region(s): section at 10px, pane at 10px
+
+  the light theme
+
+     ok   C1 (light) every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   K2 (light) keyboard focus is visible on the dark surface
+            2px @ 5.97:1 — Skip to your turn
+            2px @ 5.97:1 — Skip to decisions
+            2px @ 5.97:1 — 4 decisions blocking an agen
+            2px @ 5.97:1 — 21 tasks · about 12h 20m
+            2px @ 5.97:1 — 9 done · 2 decided
+            2px @ 5.56:1 — 09:00  ·  suggested
+            2px @ 5.56:1 — 18:00
+            2px @ 5.56:1 — + Add a condition or comment
+            2px @ 5.56:1 — Not now — stop asking
+            2px @ 5.56:1 — Reuse product-images  ·  sug
+            2px @ 5.56:1 — Create a catalogue bucketHal
+            2px @ 5.56:1 — Put them behind the CDN inst
+            2px @ 5.56:1 — Hold the import until the st
+            2px @ 5.56:1 — + Add a condition or comment
+     ok   C1 (light) every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+
+  proving each check can still fail
+
+     ok   L1 caught its own defect
+     ok   L2 caught its own defect
+     ok   L3 caught its own defect
+     ok   L4 caught its own defect
+     ok   L5 caught its own defect
+     ok   L6 caught its own defect
+     ok   C1 caught its own defect
+     ok   K1 caught its own defect
+     ok   K2 caught its own defect
+     ok   K3 caught its own defect
+     ok   K4 caught its own defect
+     ok   P1 caught its own defect
+     ok   P2 caught its own defect
+     ok   P3 caught its own defect
+     ok   P4 caught its own defect
+     ok   P5 caught its own defect
+     ok   P9 caught its own defect
+     ok   P8 caught its own defect
+     ok   P7 caught its own defect
+     ok   P6 caught its own defect
+     ok   A1 caught its own defect
+     ok   A2 caught its own defect
+
+Every check passed, and every check was shown to fail on a deliberately broken page.
+

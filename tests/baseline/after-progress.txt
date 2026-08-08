@@ -1,0 +1,104 @@
+
+Measuring the rendered interface of http://localhost:3939
+
+  phone    390x844
+     22 tasks in 1 column(s) · page 3719px (4.4 screens) · 74 tab stops · 1 primary buttons
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   L6 a phone gets exactly one column
+            1 column(s)
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   K4 a covered queue cannot be tabbed into
+            nothing behind the panel is focusable
+     ok   P1 what you have finished is visible without scrolling
+            1 of 1 progress figure(s) start within the first screen
+
+  laptop   1280x900
+     22 tasks in 1 column(s) · page 1771px (2 screens) · 74 tab stops · 1 primary buttons
+     ok   L1 every section fills the column it sits in
+            narrowest section fills 100% of its column (asks: 748px of 748px)
+     ok   L2 an opened item fills the container it was given
+            content spans 343px of a 343px container (100%)
+     ok   L3 tasks are visible without scrolling
+            7 of 22 tasks start within the first screen
+     ok   L4 the queue is not an endless scroll
+            the longest scroller is 1.97 screens tall
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   P1 what you have finished is visible without scrolling
+            1 of 1 progress figure(s) start within the first screen
+
+  monitor  1920x1080
+     22 tasks in 1 column(s) · page 1854px (1.7 screens) · 74 tab stops · 1 primary buttons
+     ok   L1 every section fills the column it sits in
+            narrowest section fills 100% of its column (asks: 911px of 911px)
+     ok   L2 an opened item fills the container it was given
+            content spans 420px of a 420px container (100%)
+     ok   L3 tasks are visible without scrolling
+            10 of 22 tasks start within the first screen
+     ok   L4 the queue is not an endless scroll
+            the longest scroller is 1.72 screens tall
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   K1 nothing pretends to be a button
+            every control with a button role is a real <button>
+     ok   K2 keyboard focus is visible on the dark surface
+            2px @ 8.96:1 — Skip to your turn
+            2px @ 8.96:1 — Skip to decisions
+            2px @ 8.96:1 — 4 decisions blocking an agen
+            2px @ 8.96:1 — 21 tasks · about 12h 20m
+            2px @ 8.96:1 — 9 done · 2 decided
+            2px @ 7.87:1 — 09:00  ·  suggested
+            2px @ 7.87:1 — 18:00
+            2px @ 7.87:1 — + Add a condition or comment
+            2px @ 7.87:1 — Not now — stop asking
+            2px @ 7.87:1 — Reuse product-images  ·  sug
+            2px @ 7.87:1 — Create a catalogue bucketHal
+            2px @ 7.87:1 — Put them behind the CDN inst
+            2px @ 7.87:1 — Hold the import until the st
+            2px @ 7.87:1 — + Add a condition or comment
+     ok   K3 a keyboard reaches the task list quickly
+            3 keystroke(s) to focus a task
+     ok   P1 what you have finished is visible without scrolling
+            1 of 1 progress figure(s) start within the first screen
+     ok   P2 every finished item can be listed, not just the last few
+            9 finished item(s) listed
+     ok   P3 a completion says what became true, not just its title
+            7 of 9 listed completions quote what they achieved
+     ok   P4 every progress figure is a control, and finished work can be undone
+            all 3 figures are controls, and all 9 finished rows can be re-opened
+     ok   P5 nothing on the progress surface sets a target or names a streak
+            no targets, no countdowns, no streak — every figure states what happened
+     ok   A1 the save-state message is announced
+            7 of 7 save-state elements are in a live region
+     ok   A2 every field has a real label
+            all 2 fields labelled
+
+  proving each check can still fail
+
+     ok   L1 caught its own defect
+     ok   L2 caught its own defect
+     ok   L3 caught its own defect
+     ok   L4 caught its own defect
+     ok   L5 caught its own defect
+     ok   L6 caught its own defect
+     ok   C1 caught its own defect
+     ok   K1 caught its own defect
+     ok   K2 caught its own defect
+     ok   K3 caught its own defect
+     ok   K4 caught its own defect
+     ok   P1 caught its own defect
+     ok   P2 caught its own defect
+     ok   P3 caught its own defect
+     ok   P4 caught its own defect
+     ok   P5 caught its own defect
+     ok   A1 caught its own defect
+     ok   A2 caught its own defect
+
+Every check passed, and every check was shown to fail on a deliberately broken page.
+

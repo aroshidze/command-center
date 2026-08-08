@@ -1,0 +1,93 @@
+
+> command-center@1.0.0 prove:layout
+> node tests/measure-layout.mjs
+
+
+Measuring the rendered interface of http://localhost:3939
+
+  phone    390x844
+     22 tasks in 1 column(s) · page 10932px (13 screens) · 66 tab stops · 26 primary buttons
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   L6 a phone gets exactly one column
+            1 column(s)
+     FAIL C1 every rendered text colour meets WCAG 2.2 AA
+            39 failing element(s); the distinct colour/size combinations are:
+            3.47:1 needs 4.5 — DIV.kbd-hint 12px/400 "Ctrl + Enter to send"
+            3.39:1 needs 4.5 — KBD.KBD 11.5px/400 "Enter"
+            4.02:1 needs 4.5 — SPAN.pmeta 12.5px/400 "1 task · 2h  ▴"
+            3.2:1 needs 4.5 — BUTTON.primary 16px/600 "I've done this"
+            3.7:1 needs 4.5 — DIV.kbd-hint 12px/400 "Ctrl + Enter to send"
+
+  laptop   1280x900
+     22 tasks in 3 column(s) · page 6613px (7.3 screens) · 66 tab stops · 26 primary buttons
+     FAIL L1 every section fills the column it sits in
+            narrowest section fills 73% of its column (asks: 820px of 1124px)
+     FAIL L2 an opened item fills the container it was given
+            content spans 760px of a 1090px container (70%)
+     FAIL L3 tasks are visible without scrolling
+            0 of 22 tasks start within the first screen
+     FAIL L4 the queue is not an endless scroll
+            the longest scroller is 7.35 screens tall
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     FAIL C1 every rendered text colour meets WCAG 2.2 AA
+            39 failing element(s); the distinct colour/size combinations are:
+            3.47:1 needs 4.5 — DIV.kbd-hint 12px/400 "Ctrl + Enter to send"
+            3.39:1 needs 4.5 — KBD.KBD 11.5px/400 "Enter"
+            4.02:1 needs 4.5 — SPAN.pmeta 12.5px/400 "1 task · 2h  ▴"
+            3.2:1 needs 4.5 — BUTTON.primary 16px/600 "I've done this"
+            3.7:1 needs 4.5 — DIV.kbd-hint 12px/400 "Ctrl + Enter to send"
+
+  monitor  1920x1080
+     22 tasks in 3 column(s) · page 6532px (6 screens) · 66 tab stops · 26 primary buttons
+     FAIL L1 every section fills the column it sits in
+            narrowest section fills 60% of its column (asks: 820px of 1364px)
+     FAIL L2 an opened item fills the container it was given
+            content spans 760px of a 1330px container (57%)
+     FAIL L3 tasks are visible without scrolling
+            0 of 22 tasks start within the first screen
+     FAIL L4 the queue is not an endless scroll
+            the longest scroller is 6.05 screens tall
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     FAIL C1 every rendered text colour meets WCAG 2.2 AA
+            39 failing element(s); the distinct colour/size combinations are:
+            3.47:1 needs 4.5 — DIV.kbd-hint 12px/400 "Ctrl + Enter to send"
+            3.39:1 needs 4.5 — KBD.KBD 11.5px/400 "Enter"
+            4.02:1 needs 4.5 — SPAN.pmeta 12.5px/400 "1 task · 2h  ▴"
+            3.2:1 needs 4.5 — BUTTON.primary 16px/600 "I've done this"
+            3.7:1 needs 4.5 — DIV.kbd-hint 12px/400 "Ctrl + Enter to send"
+     FAIL K1 nothing pretends to be a button
+            5 element(s) claim role="button" without being one (5 of them unfocusable)
+     FAIL K2 keyboard focus is visible on the dark surface
+            1px @ 1.14:1 — TEXTAREA
+            1px @ 1.14:1 — 09:00  ·  suggested
+            1px @ 1.14:1 — 18:00
+            1px @ 1.14:1 — Not now — stop asking
+            1px @ 1.14:1 — TEXTAREA
+            1px @ 1.14:1 — Reuse product-images  ·  sug
+     FAIL K3 a keyboard reaches the task list quickly
+            16 keystroke(s) to focus a task
+     FAIL A1 the save-state message is announced
+            0 of 28 save-state elements are in a live region
+     FAIL A2 every field has a real label
+            7 of 7 fields have only a placeholder
+
+  proving each check can still fail
+
+     ok   L1 caught its own defect
+     ok   L2 caught its own defect
+     ok   L3 caught its own defect
+     ok   L4 caught its own defect
+     ok   L5 caught its own defect
+     ok   L6 caught its own defect
+     ok   C1 caught its own defect
+     ok   K1 caught its own defect
+     ok   K2 caught its own defect
+     ok   K3 caught its own defect
+     ok   A1 caught its own defect
+     ok   A2 caught its own defect
+
+16 problem(s). Failing checks: C1, L1, L2, L3, L4, K1, K2, K3, A1, A2
+

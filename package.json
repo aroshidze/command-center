@@ -1,0 +1,48 @@
+{
+    "name": "command-center",
+    "version": "1.0.0",
+    "license": "MIT",
+    "//private": "Stays true even though the repository is shareable. `private` stops `npm publish` from ever succeeding by accident; it says nothing about who can read the source. This is a deploy-your-own hub, not a package.",
+    "private": true,
+    "description": "One hub across all projects: agents queue work and decisions for one human, and read the answers back in one call.",
+    "scripts": {
+        "dev": "next dev -p 3939",
+        "build": "next build",
+        "start": "next start -p 3939",
+        "typecheck": "tsc --noEmit",
+        "init-db": "node scripts/init-db.mjs",
+        "webhook": "node scripts/set-telegram-webhook.mjs",
+        "install-projects": "node scripts/install-into-project.mjs",
+        "prove": "node tests/prove.mjs",
+        "prove:negative": "node tests/prove-failures.mjs",
+        "prove:health": "node tests/prove-health-fails.mjs",
+        "prove:parse": "node tests/no-backticks.mjs",
+        "prove:docs": "node tests/docs-rot.mjs",
+        "//prove:all": "typecheck is FIRST, and its absence was a real gap. `prove:parse` runs node --check over tests/ because that is where the backtick trap historically bit — but the trap is about template literals holding SQL or page-side JS, and lib/store.ts is full of them. A pair of backticks in a SQL comment there closed the literal and the only thing that caught it was tsc. Three seconds, and it turns an unreadable SyntaxError into a filename.",
+        "prove:all": "npm run typecheck && npm run prove:parse && npm run prove:hooks && npm run prove:docs && npm run prove && npm run prove:negative && npm run prove:palette && npm run prove:ladder && npm run prove:use && npm run prove:layout && npm run audit && npm run prove:health",
+        "prove:layout": "node tests/measure-layout.mjs",
+        "prove:use": "node tests/use-it.mjs",
+        "fixture": "node tests/fixture.mjs",
+        "//at-scale": "Two years of his own measured rate, so the payload can be looked at rather than estimated. --load, --measure, --clean. See tests/at-scale.mjs.",
+        "at-scale": "node tests/at-scale.mjs",
+        "fixture:clear": "node tests/fixture.mjs --clear",
+        "fixture:live": "node tests/fixture.mjs --live",
+        "shots": "node tests/shoot.mjs",
+        "prove:palette": "node tests/palette.mjs",
+        "prove:ladder": "node tests/ladder.mjs",
+        "audit": "node tests/audit-ui.mjs",
+        "shots:light": "node tests/shoot.mjs --light",
+        "prove:hooks": "node tests/prove-hooks.mjs"
+    },
+    "dependencies": {
+        "@neondatabase/serverless": "1.1.0",
+        "next": "16.2.12",
+        "react": "19.2.8",
+        "react-dom": "19.2.8"
+    },
+    "devDependencies": {
+        "@types/node": "24.13.3",
+        "@types/react": "19.2.17",
+        "typescript": "5.9.3"
+    }
+}

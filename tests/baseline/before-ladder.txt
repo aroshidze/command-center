@@ -1,0 +1,44 @@
+
+> command-center@1.0.0 prove:ladder
+> node tests/ladder.mjs
+
+
+  the record as it grows
+
+      day  completions  points  level  rank                  toNext  marks  next  emblem
+        1            3      62      2  Responder                18      7     3  2sp/1r/h165
+        7           21     434      5  Unblocker                16     13     3  5sp/2r/h204
+       30           90    1860     10  Ground control            —     23     3  10sp/3r/h269
+       62          186    3844     10  Ground control            —     26     3  10sp/3r/h269
+      100          300    6200     10  Ground control            —     29     2  10sp/3r/h269
+      200          600   12400     10  Ground control            —     29     2  10sp/3r/h269
+      365         1095   22630     10  Ground control            —     29     2  10sp/3r/h269
+      730         2190   45260     10  Ground control            —     29     2  10sp/3r/h269
+
+  what must still be true after two years of use
+
+     FAIL T1 the ladder never runs out — there is always a next rank
+            at day 730 there is NOTHING above Ground control. The ladder ended at 45260 points and cannot move again, ever.
+     FAIL T2 the level still moves long after the current ceiling (day 30)
+            day 30: level 10 — day 730: level 10  <- IDENTICAL. Between them the record grew by 2100 completions and nothing changed.
+     FAIL T3 the profile is still being enhanced — the emblem differs from its day-30 shape
+            frozen at 10 spokes, 3 rings, hue 269 since day 30. He asked for a profile that gets enhanced when he does.
+     ok   T4 marks keep arriving as the record grows
+            day 30: 23 earned — day 730: 29 earned
+     ok   T5 there is always something coming, at every scale
+            "next up" is non-empty at all 8 sample points
+     ok   T6 every stated target is exactly `nextAt - points`, at every scale
+            the same arithmetic check P5 makes against the rendered page, made against the derivation
+     ok   T7 more finished work never means fewer points or a lower level
+            a score that falls while he sleeps is a score he would be right to stop believing
+     ok   T8 the progress fraction stays within 0..1 at every scale
+
+  proving the check can fail
+
+     ok   T1-inj a ladder with nothing above its top rank is caught
+            simulated a terminal RANKS array: toNext === null
+     ok   T3-inj an emblem that has stopped changing is caught
+            two levels capped to the same geometry are reported as identical
+
+  3 assertion(s) failed. The progression does not survive the sample range.
+

@@ -1,0 +1,129 @@
+The red run: every progress check written against the interface BEFORE the record existed.
+Committed as evidence. See docs/PROGRESS-REPORT.md.
+Date: 30 July 2026. Fixture: 22 open tasks / 4 open decisions / 9 finished / 2 answered.
+
+=============================================================== npm run prove:layout
+
+Measuring the rendered interface of http://localhost:3939
+
+  phone    390x844
+     22 tasks in 1 column(s) · page 3676px (4.4 screens) · 73 tab stops · 1 primary buttons
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   L6 a phone gets exactly one column
+            1 column(s)
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   K4 a covered queue cannot be tabbed into
+            nothing behind the panel is focusable
+     FAIL P1 what you have finished is visible without scrolling
+            NOT MEASURED — nothing on the page states any figure about finished work
+
+  laptop   1280x900
+     22 tasks in 1 column(s) · page 1771px (2 screens) · 73 tab stops · 1 primary buttons
+     ok   L1 every section fills the column it sits in
+            narrowest section fills 100% of its column (asks: 748px of 748px)
+     ok   L2 an opened item fills the container it was given
+            content spans 343px of a 343px container (100%)
+     ok   L3 tasks are visible without scrolling
+            7 of 22 tasks start within the first screen
+     ok   L4 the queue is not an endless scroll
+            the longest scroller is 1.97 screens tall
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     FAIL P1 what you have finished is visible without scrolling
+            NOT MEASURED — nothing on the page states any figure about finished work
+
+  monitor  1920x1080
+     22 tasks in 1 column(s) · page 1854px (1.7 screens) · 73 tab stops · 1 primary buttons
+     ok   L1 every section fills the column it sits in
+            narrowest section fills 100% of its column (asks: 911px of 911px)
+     ok   L2 an opened item fills the container it was given
+            content spans 420px of a 420px container (100%)
+     ok   L3 tasks are visible without scrolling
+            10 of 22 tasks start within the first screen
+     ok   L4 the queue is not an endless scroll
+            the longest scroller is 1.72 screens tall
+     ok   L5 nothing escapes the viewport sideways
+            no sideways scroll, nothing past the edge
+     ok   C1 every rendered text colour meets WCAG 2.2 AA
+            all text passes for its size and weight
+     ok   K1 nothing pretends to be a button
+            every control with a button role is a real <button>
+     ok   K2 keyboard focus is visible on the dark surface
+            2px @ 8.96:1 — Skip to your turn
+            2px @ 8.96:1 — Skip to decisions
+            2px @ 8.96:1 — 4 decisions blocking an agen
+            2px @ 8.96:1 — 21 tasks · about 12h 20m
+            2px @ 7.87:1 — 09:00  ·  suggested
+            2px @ 7.87:1 — 18:00
+            2px @ 7.87:1 — + Add a condition or comment
+            2px @ 7.87:1 — Not now — stop asking
+            2px @ 7.87:1 — Reuse product-images  ·  sug
+            2px @ 7.87:1 — Create a catalogue bucketHal
+            2px @ 7.87:1 — Put them behind the CDN inst
+            2px @ 7.87:1 — Hold the import until the st
+            2px @ 7.87:1 — + Add a condition or comment
+            2px @ 7.87:1 — Not now — stop asking
+     ok   K3 a keyboard reaches the task list quickly
+            3 keystroke(s) to focus a task
+     FAIL P1 what you have finished is visible without scrolling
+            NOT MEASURED — nothing on the page states any figure about finished work
+     FAIL P2 every finished item can be listed, not just the last few
+            no finished item is listed anywhere on the page
+     FAIL P3 a completion says what became true, not just its title
+            NOT MEASURED — no finished item is listed, so none can state anything
+     FAIL P4 every progress figure is a control, and finished work can be undone
+            NOT MEASURED — there are no progress figures
+     FAIL P5 nothing on the progress surface sets a target or names a streak
+            NOT MEASURED — there is no progress surface to inspect
+     ok   A1 the save-state message is announced
+            7 of 7 save-state elements are in a live region
+     ok   A2 every field has a real label
+            all 2 fields labelled
+
+  proving each check can still fail
+
+     ok   L1 caught its own defect
+     ok   L2 caught its own defect
+     ok   L3 caught its own defect
+     ok   L4 caught its own defect
+     ok   L5 caught its own defect
+     ok   L6 caught its own defect
+     ok   C1 caught its own defect
+     ok   K1 caught its own defect
+     ok   K2 caught its own defect
+     ok   K3 caught its own defect
+     ok   K4 caught its own defect
+     ok   P1 caught its own defect
+     ok   P2 caught its own defect
+     ok   P3 caught its own defect
+     ok   P4 caught its own defect
+     ok   P5 caught its own defect
+     ok   A1 caught its own defect
+     ok   A2 caught its own defect
+
+7 problem(s). Failing checks: P1, P2, P3, P4, P5
+
+
+=============================================================== npm run prove:use
+
+Using the hub at http://localhost:3939
+
+  FAIL  the figure on the page equals the number of done rows in the database
+          the page renders no tasks-done figure at all
+  FAIL  ticking a task off raises the figure by exactly one and earns the tenth-completion mark
+          expected the page to say 9 before this, it said null
+  FAIL  RE-OPENING TAKES THE CREDIT BACK — the figure drops, done_at clears, the mark is un-earned
+          no finished-work control on the page
+  FAIL  a refused re-open shows the server's reason and changes no figure
+          expected 9 before this check, the page said null
+  ok    ticking a task from its row removes it AND the database says done
+  ok    a note typed in the pane is stored before the task is ticked
+  ok    tapping an option with a comment stores BOTH
+  ok    a refused write is reported with the server's reason and the row STAYS
+
+4 passed, 4 failed
+
