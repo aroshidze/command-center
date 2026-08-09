@@ -33,7 +33,7 @@
  * behaves exactly as it did before they existed, which is the point: the setup story for somebody who wants
  * none of this is the same length it was.
  *
- *   cc presence  on|off|status  install the session and sub-agent hooks in THIS project
+ *   cc presence  on|off|status  install the activity, sub-agent and report hooks in THIS project
  *   cc approvals on|off|status  install the permission-relay hook in THIS project
  *   cc spend                    read Claude Code's usage records and post per-project totals
  *   cc heartbeat                (called BY a hook, reads its JSON on stdin — not for a human)
@@ -549,6 +549,26 @@ switch (cmd) {
          * into the same database `sync` reads.
          */
         const SPAWNER = 'Task|Agent';
+        /*
+         * THE NOTIFICATION TYPES THAT MEAN A PERSON IS NEEDED, and nothing else. `Notification` also fires
+         * for `auth_success` and for elicitation traffic, none of which is about him — matching all of them
+         * would put rows in the thread that no human action follows from, which is the one test
+         * docs/RESEARCH.md §14 sets for anything appearing on a page.
+         */
+        const NEEDS_HUMAN = 'agent_needs_input|idle_prompt|permission_prompt';
+        /*
+         * `--no-words` IS AN ANSWER TO A FAIR OBJECTION, and it is one flag rather than a second command.
+         *
+         * With the report hooks installed, the hub is sent the last thing the assistant said each turn and
+         * the prompts he types. On his own hub, for his own projects, that is the whole feature — it is
+         * what makes the thread on a project page a conversation instead of a row of timestamps. On
+         * somebody else's work machine it is a reasonable thing to refuse, and this repository is public.
+         *
+         * So: the flag is written INTO the hook command in `.claude/settings.json`, where it is visible to
+         * anyone reading the file, and it withholds only the text. Activity, runs, branch, model and
+         * "waiting for you" all still work, because none of them is made of his words.
+         */
+        const QUIET = flags.has('--no-words') ? ' --quiet' : '';
         const HOOKS = {
             presence: [
                 /*
@@ -590,6 +610,46 @@ switch (cmd) {
                 },
                 /* No matcher: SubagentStop is already about exactly one thing. */
                 { event: 'SubagentStop', sub: 'subagent', command: `${CC} subagent`, timeout: 15 },
+                /*
+                 * ==========================================================================================
+                 * WHAT WAS SAID — three hooks, and they are the difference between a status board and a
+                 * command centre.
+                 * ==========================================================================================
+                 *
+                 * `Stop` fires ONCE PER TURN and carries `last_assistant_message`. That single field is
+                 * what this whole product was missing: presence could only ever be observed at the start
+                 * and the end of a session, so a hub watching an agent that worked all evening had nothing
+                 * to say until it stopped — and said *"Nothing has looked at this since 8 August"* over a
+                 * project that was live. A per-turn hook is the mid-session evidence, and it arrives with
+                 * the agent's own words attached rather than with a number.
+                 *
+                 * `Notification` matched to the three types that mean A HUMAN IS NEEDED is the other half:
+                 * `agent_needs_input`, `idle_prompt`, `permission_prompt`. It is the harness reporting that
+                 * the agent is blocked — never the agent grading itself — which is what makes it admissible
+                 * where a self-declared status is not (lib/reports.ts explains the distinction).
+                 *
+                 * `UserPromptSubmit` records his half of the conversation, so the thread on the project
+                 * page reads as an exchange rather than as a monologue.
+                 *
+                 * WHY NOT `PostToolUse` FOR ACTIVITY, which was the first design: it runs on EVERY tool
+                 * call. Node's startup alone would put ~80ms on each one, hundreds of times a session, to
+                 * learn nothing that the end of the turn does not also say. Per-turn is the right grain and
+                 * the harness hands it over for free.
+                 *
+                 * TIMEOUTS ARE SHORT HERE ON PURPOSE. These three are the only hooks in this file that sit
+                 * between him and his own agent — `UserPromptSubmit` runs before the prompt is processed —
+                 * so a hub that is slow or down must cost a moment, not a minute. `cc report` exits 0 come
+                 * what may, so the worst case is a gap in the thread.
+                 */
+                { event: 'Stop', sub: 'report', command: `${CC} report --said${QUIET}`, timeout: 10 },
+                {
+                    event: 'UserPromptSubmit', sub: 'report',
+                    command: `${CC} report --told${QUIET}`, timeout: 10,
+                },
+                {
+                    event: 'Notification', matcher: NEEDS_HUMAN, sub: 'report',
+                    command: `${CC} report --waiting${QUIET}`, timeout: 10,
+                },
             ],
             approvals: [
                 /*
@@ -725,6 +785,22 @@ switch (cmd) {
                 ? `${cmd} ON for "${slug}" — ${EVENTS.length} hooks in ${settingsPath}\n`
                   + `  ${EVENTS.join(', ')}\n`
                   + '  No token is in that file, so it is safe to commit.\n'
+                  /*
+                   * SAID PLAINLY AT THE MOMENT OF CONSENT, because this is the one command in the CLI that
+                   * starts sending message text to a server. Burying it in docs/SETUP.md would be the shape
+                   * of a dark pattern: the person running this is the person who should be told, and the
+                   * moment they run it is when they can still change their mind. The opt-out is on the same
+                   * screen as the disclosure rather than a page away.
+                   */
+                  + (cmd === 'presence'
+                      ? (QUIET
+                          ? '  --no-words: no message text will be sent. Activity, runs, branch, model '
+                            + 'and "waiting for you" all still work.\n'
+                          : '  This sends the hub the last thing the assistant says each turn, and the '
+                            + 'prompts you type, so a project page can show the conversation. '
+                            + 'Token-shaped words are redacted before storing.\n'
+                            + '  Re-run with --no-words if you would rather it sent no message text.\n')
+                      : '')
                   + (cmd === 'approvals'
                       ? '  Whoever can open the hub can now answer permission prompts in this project. '
                         + 'See docs/SETUP.md.\n'
@@ -797,6 +873,97 @@ switch (cmd) {
             await api('/api/agent/presence', { method: 'POST', body, cfg });
         } catch (e) {
             process.stderr.write(`cc heartbeat: ${e.message.split('\n')[0]}\n`);
+        }
+        break;
+    }
+
+    /*
+     * ==========================================================================================
+     * WHAT WAS SAID — one row per turn, and it is the activity signal at the same time.
+     * ==========================================================================================
+     *
+     *   cc report --said      Stop              body = last_assistant_message
+     *   cc report --told      UserPromptSubmit  body = prompt
+     *   cc report --waiting   Notification      body = message, when the type means a human is needed
+     *
+     * FAILS QUIETLY AND EXITS 0, like every other hook in here, and for a sharper reason than the rest:
+     * `UserPromptSubmit` runs BETWEEN HIM AND HIS OWN AGENT. A non-zero exit from that event blocks the
+     * prompt. A hub that is down must never be able to stop him talking to Claude Code — so every failure
+     * path here writes one line to stderr and gets out of the way.
+     *
+     * `--quiet` sends NO MESSAGE TEXT, only the fact that a turn happened. It is what
+     * `cc presence on --no-words` installs, and it exists because "the hub uploads everything you type" is
+     * a fair objection from somebody setting this up on a work machine. Presence stays exact and
+     * "waiting for you" still works; only the words are withheld.
+     */
+    case 'report': {
+        const raw = (() => { try { return readFileSync(0, 'utf8'); } catch { return ''; } })();
+        let hook = {};
+        try { hook = JSON.parse(raw || '{}'); } catch { /* handled by the identity check below */ }
+
+        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        const cwd = hook.cwd || process.cwd();
+        const project = flagValue('project') || slugify(String(cwd).split(/[\\/]/).filter(Boolean).pop() || '');
+        const session = hook.session_id || flagValue('session') || 'unknown';
+
+        const kind = flags.has('--said') ? 'said'
+            : flags.has('--told') ? 'told'
+                : flags.has('--waiting') ? 'waiting'
+                    : null;
+        if (!kind) die('usage: cc report --said|--told|--waiting   (driven by a hook, reads stdin)');
+
+        if (!project || session === 'unknown') {
+            process.stderr.write('cc report: no project or session id on stdin; nothing sent\n');
+            break;
+        }
+
+        /*
+         * ONLY THE NOTIFICATIONS THAT MEAN A PERSON IS NEEDED. The `matcher` in the settings file is the
+         * first lock and this is the second, for the same reason `cc subagent` re-checks the tool name: a
+         * settings file edited by hand, or written by an older version of this CLI, is not a guarantee.
+         * `auth_success` and the elicitation traffic are not about him and would put rows in the thread
+         * that no action follows from.
+         */
+        const NEEDS_HUMAN = ['agent_needs_input', 'idle_prompt', 'permission_prompt'];
+        if (kind === 'waiting' && hook.notification_type
+            && !NEEDS_HUMAN.includes(String(hook.notification_type))) {
+            break;
+        }
+
+        const said = kind === 'said' ? hook.last_assistant_message
+            : kind === 'told' ? hook.prompt
+                : hook.message;
+        const body = flags.has('--quiet') || said == null || said === '' ? null : String(said);
+
+        /*
+         * THE MODEL AND THE BRANCH, EVERY TURN, and both change mid-session for real reasons: a session
+         * that switched model with /model, and an agent that checked out a branch an hour in. The hub
+         * showing the branch a session STARTED on would be a small untruth of exactly the kind this
+         * project spends its time removing. Both are cheap — the transcript read is a 256 KB tail seek,
+         * and `git rev-parse` is a few milliseconds.
+         */
+        const payload = { project, session, kind, body };
+        payload.model = hook.model || modelFromTranscript(hook.transcript_path) || null;
+        payload.branch = await (async () => {
+            try {
+                const { execFileSync } = await import('node:child_process');
+                return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'],
+                    { cwd: String(cwd), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+            } catch { return null; }
+        })();
+
+        try {
+            const r = await api('/api/agent/report', { method: 'POST', body: payload, cfg });
+            /* Said out loud rather than silently accepted: a redaction means the hub changed what it was
+             * sent, and the operator should hear that from the tool rather than notice it on a page. */
+            if (r?.redacted) {
+                process.stderr.write(
+                    'cc report: something in that message looked like a credential, so it was redacted '
+                    + 'before storing. The hub stores no secrets by rule.\n',
+                );
+            }
+        } catch (e) {
+            process.stderr.write(`cc report: ${e.message.split('\n')[0]}\n`);
         }
         break;
     }
@@ -1511,7 +1678,8 @@ switch (cmd) {
             `  cc health                  is the hub working\n` +
             `  cc setup <url> <token>     configure this machine\n` +
             `\n  Opt-in, per project, run in the project folder:\n` +
-            `  cc presence on|off         heartbeat hooks — is anything working on this project\n` +
+            `  cc presence on|off         activity hooks — what is running, and what it just said
+                             (--no-words sends activity but never message text)\n` +
             `  cc approvals on|off        permission relay — answer a held tool call from your phone\n` +
             `  cc spend                   post Claude Code's per-project token totals\n` +
             `                             (add --dry to any of these to see what would change)\n\n` +

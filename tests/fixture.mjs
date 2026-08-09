@@ -243,6 +243,10 @@ async function clear() {
      * a block that no longer has anything to do with it, which is the y2-* trap from §XXVIII wearing a
      * new shape. Unscoped, because a fixture that only cleans its own rows leaves everybody else's. */
     await db`delete from subagents`;
+    /* And the reports, for the sharpest version of the same reason: a leftover `waiting` row is the page
+     * saying an agent is blocked on a question that was answered days ago, at the very top of the surface,
+     * which is worse than a stale figure — it is a stale INSTRUCTION. */
+    await db`delete from reports`;
 }
 
 async function post(path, body) {
@@ -1147,6 +1151,66 @@ if (UNSTARTED) {
         await sub(P.c, 'fx-night-4', 'fx-sub-6', 'Explore',
             'read the competitor pricing pages', 60 * 12 - 3, 60 * 11 - 20, 'ended',
             null, null, null, null, false);
+
+        /*
+         * ==============================================================================================
+         * WHAT WAS SAID — the reports the project page and the thread are made of.
+         * ==============================================================================================
+         *
+         * WHY THE FIXTURE MUST PRODUCE THESE. `/p/<slug>` is the page he asked for four times, and every
+         * interesting thing on it is a fold over `reports`. Without them the page renders as a name, a
+         * sentence and an empty column — which is exactly the state /agents shipped in twice, and the
+         * reason this file already plants presence and sub-agents rather than leaving them to be pasted
+         * in by hand. A page the fixture cannot produce is a page nobody compares to anything.
+         *
+         * FIVE SHAPES, because each one is a distinct rule and the fourth is the one that matters most:
+         *
+         *   said     the assistant's own last words, several sentences with line breaks in them
+         *   told     his half, so the thread reads as an exchange rather than a monologue
+         *   waiting  the harness reporting that an agent is blocked — the state the page leads with
+         *   a LONG body at the 400-character cap, so truncation is visible rather than theoretical
+         *   a run in a SECOND conversation of the same project, so "the latest word" has to pick
+         *
+         * `cold-brew` deliberately gets NOTHING: a project with activity and no reports is what every
+         * project looks like before `cc presence on` has run, and the empty state has to be seen too.
+         */
+        const report = async (project, agent, session, kind, minutesAgo, body) => {
+            await db`
+                insert into reports (id, project, agent, session, kind, body, at)
+                values (${`rfx${Math.random().toString(36).slice(2, 10)}`}, ${project}, ${agent},
+                        ${session}, ${kind}, ${body}, ${agoMin(minutesAgo)})`;
+        };
+        await report(P.big, 'claude-code', 'fixture-working', 'told', 26,
+            'the pricing helper is called in four places and two of them disagree about cache reads. '
+            + 'work out which is right and make the other one match.');
+        await report(P.big, 'claude-code', 'fixture-working', 'said', 24,
+            'Found it. `costOf` counts a 1h cache write at the 5m rate, so every figure on /agents is '
+            + 'about 8% low for long sessions.\n\nFixing the rate table first, then the two call sites.');
+        await report(P.big, 'claude-code', 'fixture-working', 'said', 3,
+            'Rate table fixed and both call sites now read from it. The per-project figures moved by '
+            + '4-11%; the total went from $11,904 to $12,847.\n\nOne thing I could not settle: the '
+            + 'cache-read price for opus-4-8 is not published anywhere I can reach, so that model is '
+            + 'still excluded from the total rather than guessed at. The page says so under the figure.');
+        /* A second conversation in the same project, older, so the newest-per-conversation fold has two
+         * candidates and has to choose — with one row nothing is being tested. */
+        await report(P.big, 'codex', 'fx-brief', 'said', 60 * 9,
+            'Ran the palette check across all six palettes in both schemes. 4,324 pairs, all green.');
+        /* The 400-character cap, exceeded on purpose. Stored truncated by lib/store.ts, so the page is
+         * rendering a shortened body and the ellipsis is on screen rather than in a comment. */
+        await report(P.b, 'claude-code', 'fx-overlap-a', 'said', 60 * 5,
+            'Long answer, kept because the cap is the point: '
+            + 'the empty state belongs to the pane rather than to the list, because the list is a '
+            + 'child of the pane and a child cannot know whether its parent has anything else in it. '
+            + 'I moved it up one level, which also removed the duplicate heading nobody had noticed, '
+            + 'and the two-hundred-pixel gap under it was a margin on an element that is no longer '
+            + 'rendered at that breakpoint. Every one of those was a separate small wrongness that '
+            + 'added up to the thing you actually complained about, which was that it looked unfinished.');
+        /* WAITING. The harness said so, and the page leads with it. Twenty-two minutes, which is inside
+         * the live window — so the row above it reads as working while this one says it is stuck, which
+         * is the true and slightly awkward combination the page has to render without contradicting
+         * itself. */
+        await report(P.c, 'codex', 'fixture-open', 'waiting', 22,
+            'Codex needs your permission to run: rm -rf .next && npm run build');
 
         const spend = async (project, model, i, o, cw1h, cr, n) => {
             await db`

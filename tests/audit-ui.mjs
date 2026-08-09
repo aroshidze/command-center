@@ -59,11 +59,35 @@ const STATES = [
     /* The unlocks. In here from the day it shipped rather than after he finds something on it, which is the
        order the last three iterations did it in. */
     { label: '/looks, what the levels bought', at: '/looks' },
+    /*
+     * ==========================================================================================
+     * WHO IS WORKING, AND ONE PROJECT'S OWN PAGE — and their absence here is why this note is long.
+     * ==========================================================================================
+     *
+     * `/agents` shipped, was called finished four times, and was NEVER IN THIS FILE. Its owner then
+     * opened it and found in twenty seconds what twenty-three green checks had not: five one-line rows,
+     * a dollar figure he had not been charged, and a project reported as untouched while an agent worked
+     * in it. This walk is the thing that looks at a page the way a person does — every width, both
+     * themes, truncation without a route, cursors that lie — and it had never been pointed at the
+     * feature he had asked for five times.
+     *
+     * The project page is in here from the day it ships, which is the whole point.
+     *
+     * IT FINDS ITS SUBJECT BY PRESSING A LINK rather than naming a slug. A hardcoded
+     * `/p/harbour-lights` would work on this machine and 404 on every hub that has ever been set up by
+     * anybody else — and the audit is also the thing that would catch the link itself going missing.
+     */
+    { label: '/agents, who is working', at: '/agents' },
+    { label: 'a project page, reached by pressing its name', at: '/agents', go: 'openProject' },
 ];
 
 const GO = {
     openTask: `(() => { const r = document.querySelector('[data-measure="task"] .rowmain');
         if (!r) return 'no task'; r.click(); return 'ok'; })()`,
+    /* A real navigation rather than a click on a React handler, so this waits for the page rather than for
+       a state update — `location.assign` is what the anchor would do anyway. */
+    openProject: `(() => { const a = document.querySelector('[data-measure="project-link"]');
+        if (!a) return 'no project'; location.assign(a.getAttribute('href')); return 'ok'; })()`,
     chip: `(() => { const b = document.querySelector('header [data-figure="tasks-done"]');
         if (!b) return 'no chip'; b.click(); return 'ok'; })()`,
     figTasks: `(() => { const b = document.querySelector('.record [data-figure="tasks-done"]');

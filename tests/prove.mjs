@@ -53,6 +53,10 @@ async function resetProofData() {
      * project would leave it behind and make the page report spend nobody spent. */
     await db`delete from presence where project like 'proof-%'`;
     await db`delete from approvals where project like 'proof-%'`;
+    /* And the reports, for the sharpest version of the same reason: a leftover `waiting` row puts an amber
+     * banner at the top of a real project page saying an agent is blocked, which is a stale INSTRUCTION
+     * rather than a stale figure. */
+    await db`delete from reports where project like 'proof-%'`;
     await db`delete from spend where source = 'proof-machine'`;
     await db`delete from notes where project like 'proof-%' or body like '%proof note%'`;
     await db`delete from events where project like 'proof-%' or summary like '%roof note%'`;
@@ -959,6 +963,26 @@ await check('the snippet every project gets covers every agent-facing behaviour'
             'ordinary terminal prompt'],
         ['that a held tool call is neither a task nor a question', 'not a decision and not a task'],
         ['that switching approvals on widens what the hub link can do', 'approve tool calls'],
+        /*
+         * ==================================================================================================
+         * FIVE ROWS FOR THE REPORTS, because this is the one opt-in that changes what an agent's OWN WORDS
+         * are for.
+         * ==================================================================================================
+         *
+         * With the report hooks installed, the last paragraph of every turn is read by a human, on a page,
+         * later. That is a change in what writing clearly is FOR, and an agent that does not know it will
+         * keep ending turns with "Done!" — which is exactly what the owner will then be looking at when he
+         * opens the project page. The behaviour rows matter more than the command row here.
+         *
+         * The last two are the refusals, and they are rows rather than comments for the same reason the
+         * others are: an agent that knows its words are stored and does NOT know that self-assessment is
+         * refused will try to be helpful and write a status into them.
+         */
+        ['that the end of every turn is sent to the hub', 'last thing you actually said'],
+        ['that a human reads the last paragraph of a turn on a page', 'read by a human'],
+        ['that the harness reports when an agent is waiting, not the agent', 'waiting for a person'],
+        ['that an agent is still not asked to grade itself', 'grade yourself'],
+        ['that message text can be withheld while activity is still reported', '--no-words'],
     ];
 
     /*
@@ -1743,6 +1767,139 @@ await check('a heartbeat REFUSES to store a self-reported status, however it is 
     }
 });
 
+await check('a REPORT is stored as a quote, and an invented kind is refused', async () => {
+    /*
+     * The distinction the whole feature rests on, asserted against the database rather than promised in a
+     * comment: what an agent SAID is stored, what an agent CLAIMS ABOUT ITSELF has no field to go in.
+     * `lib/presence.ts` refuses a `doing` column and `/api/agent/report` must not become the back door to
+     * one — so a kind that is not one of the three documented observations is rejected outright.
+     */
+    const db = await dbDirect();
+    await db`delete from reports where project = 'proof-reports'`;
+    await db`delete from presence where project = 'proof-reports'`;
+
+    const said = await agent('/api/agent/report', {
+        method: 'POST',
+        body: {
+            project: 'proof-reports', session: 'conv-1', kind: 'said',
+            body: 'Fixed the rate table. Two call sites left.',
+        },
+    });
+    eq(said.status, 200, 'status');
+    eq(said.json.saved, true, 'saved');
+    eq(said.json.run, 'conv-1', 'the first run of a conversation keeps the bare session id');
+
+    const [row] = await db`select * from reports where project = 'proof-reports'`;
+    eq(row.kind, 'said', 'the stored kind');
+    eq(row.body, 'Fixed the rate table. Two call sites left.', 'the stored words');
+    eq(row.session, 'conv-1', 'the stored session is the CONVERSATION, never the run');
+
+    /* The same call is the activity signal, which is the half that stops the page saying nothing has looked
+     * at a project an agent is working in. */
+    const beats = await db`select * from presence where project = 'proof-reports'`;
+    eq(beats.length, 1, 'presence rows — a report must also register as activity');
+    assert(beats[0].ended_at == null, 'a report closed the run it was reporting activity for');
+
+    for (const kind of ['doing', 'status', 'progress', 'health', 'green']) {
+        const bad = await agent('/api/agent/report', {
+            method: 'POST',
+            body: { project: 'proof-reports', session: 'conv-1', kind, body: 'all going well' },
+        });
+        assert(bad.status >= 400, `kind "${kind}" was accepted; the refusal has a back door`);
+    }
+
+    const stored = JSON.stringify(await db`select * from reports where project = 'proof-reports'`);
+    assert(!stored.includes('all going well'), 'a self-reported status reached the database');
+});
+
+await check('a report REDACTS a credential rather than storing it or losing the report', async () => {
+    /*
+     * The one place in this codebase where a secret-shaped value is redacted instead of rejected, and the
+     * reasoning is on `redactSecrets` in lib/reports.ts: nobody can rewrite a message that has already been
+     * said, so the choice is between keeping it with the token removed and throwing away the only account of
+     * what an agent was doing.
+     *
+     * BOTH HALVES ARE ASSERTED. That the key is gone, and that the sentence around it survived — a rule that
+     * quietly dropped the whole body would pass a check written only against the first half.
+     */
+    const db = await dbDirect();
+    await db`delete from reports where project = 'proof-reports'`;
+    const KEY = `sk-${'proj-'}AbCdEfGh12345678ijklMNOP`;
+
+    const r = await agent('/api/agent/report', {
+        method: 'POST',
+        body: {
+            project: 'proof-reports', session: 'conv-2', kind: 'said',
+            body: `I set OPENAI_API_KEY to ${KEY} and the build went green`,
+        },
+    });
+    eq(r.status, 200, 'status');
+    eq(r.json.redacted, true, 'the response must say the text was changed');
+
+    const [row] = await db`select * from reports where project = 'proof-reports'`;
+    assert(!String(row.body).includes(KEY), 'the credential itself reached the database');
+    assert(String(row.body).includes('(redacted)'), 'nothing marks where the credential was');
+    assert(String(row.body).includes('the build went green'),
+        'the rest of the message was thrown away with the secret');
+});
+
+await check('a CONVERSATION IS SPLIT INTO RUNS at a gap, and the old run is closed at its last sighting',
+    async () => {
+        /*
+         * HIS FINDING, ENFORCED: *"The session may never end… One open AI iteration can be live for several
+         * days."* An eleven-day conversation drawn as one bar eleven days long is useless, so runs are cut
+         * out of activity wherever it went quiet for longer than RUN_GAP_MINUTES.
+         *
+         * The gap is faked by backdating the row rather than by waiting an hour. What is asserted is the
+         * whole rule: a NEW run id, the old row CLOSED, and closed AT ITS LAST SIGHTING rather than at now —
+         * that last part is the difference between recording a gap and claiming an hour of work nobody saw.
+         */
+        const db = await dbDirect();
+        await db`delete from reports where project = 'proof-runs'`;
+        await db`delete from presence where project = 'proof-runs'`;
+
+        const first = await agent('/api/agent/report', {
+            method: 'POST',
+            body: { project: 'proof-runs', session: 'conv-9', kind: 'said', body: 'run one' },
+        });
+        eq(first.json.run, 'conv-9', 'the first run keeps the bare conversation id');
+
+        /* Ninety minutes, which is past the sixty-minute gap. Both timestamps move, because the gap is
+         * measured from the LAST thing seen. */
+        await db`
+            update presence
+               set started_at = now() - interval '120 minutes',
+                   last_seen_at = now() - interval '90 minutes'
+             where project = 'proof-runs'`;
+
+        const second = await agent('/api/agent/report', {
+            method: 'POST',
+            body: { project: 'proof-runs', session: 'conv-9', kind: 'said', body: 'run two' },
+        });
+        eq(second.json.run, 'conv-9:2', 'a gap must start a second run');
+
+        const rows = await db`
+            select session, started_at, last_seen_at, ended_at, end_reason
+              from presence where project = 'proof-runs' order by started_at`;
+        eq(rows.length, 2, 'presence rows after a gap');
+        eq(String(rows[0].session), 'conv-9', 'the first run keeps its id');
+        eq(String(rows[0].end_reason), 'gap', 'the closed run must say why it ended');
+        assert(rows[0].ended_at != null, 'the old run was left open, so it would draw to now');
+        const closedAt = new Date(rows[0].ended_at).getTime();
+        const lastSeen = new Date(rows[0].last_seen_at).getTime();
+        assert(Math.abs(closedAt - lastSeen) < 2000,
+            'the old run was closed at NOW rather than at the last thing seen, which claims a span '
+            + 'nobody observed');
+        assert(rows[1].ended_at == null, 'the new run was closed immediately');
+
+        /* AND THE REPORTS STILL NAME THE CONVERSATION, not the run — that is what lets a sub-agent or a
+         * report be matched to whichever run was going at the time, however the boundaries move later. */
+        const said = await db`
+            select distinct session from reports where project = 'proof-runs'`;
+        eq(said.length, 1, 'distinct session ids in reports');
+        eq(String(said[0].session), 'conv-9', 'reports must be filed against the conversation');
+    });
+
 await check('a held tool call is sanitised on the way IN, not on the way out', async () => {
     /*
      * The attack shapes, planted through the real endpoint. A right-to-left override in the tool name and two
@@ -1955,10 +2112,13 @@ await check('the hub is left with no trace of this run', async () => {
              * the thing it was warning about. */
             (select count(*)::int from presence  where project like 'proof-%') p,
             (select count(*)::int from approvals where project like 'proof-%') ap,
+            (select count(*)::int from reports   where project like 'proof-%') r,
             (select count(*)::int from spend     where source = 'proof-machine') s
     `;
-    eq([row.t, row.q, row.n, row.e, row.a, row.p, row.ap, row.s], [0, 0, 0, 0, 0, 0, 0, 0],
-        'leftover proof rows [tasks, questions, notes, events, agents, presence, approvals, spend]');
+    eq([row.t, row.q, row.n, row.e, row.a, row.p, row.ap, row.r, row.s],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        'leftover proof rows [tasks, questions, notes, events, agents, presence, approvals, reports, '
+        + 'spend]');
 });
 
 /* ------------------------------------------------------------------------------------ verdict */

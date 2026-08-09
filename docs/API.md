@@ -196,6 +196,40 @@ done something.
 
 ---
 
+## `POST /api/agent/report`
+
+What was said, and when. Written by hooks rather than by hand — `cc presence on` installs them — and it is
+also the activity signal, so one call per turn keeps presence exact and records the words.
+
+```json
+{ "project": "harbour-lights", "session": "abc-123", "kind": "said",
+  "body": "Rate table fixed. Two call sites left.", "branch": "master", "model": "claude-opus-5" }
+```
+
+| `kind` | Where it comes from | What it means |
+|--------|--------------------|---------------|
+| `said` | the `Stop` hook's `last_assistant_message` | the last thing the assistant actually said in a turn |
+| `told` | `UserPromptSubmit`'s `prompt` | what the human typed |
+| `waiting` | `Notification` with type `agent_needs_input`, `idle_prompt` or `permission_prompt` | the **harness** says the agent needs a person |
+
+**There is no `kind` an agent invents for itself, and anything else is a `400`.** No `doing`, no `status`, no
+`progress`, no `health`. The reasoning is in [lib/reports.ts](../lib/reports.ts) and it is not stylistic: an
+agent asked to describe its own state describes it favourably, and one cheerful status makes every other
+signal on the page worthless. All three kinds above are **quotes with a time on them**, authored by the
+harness rather than by the agent's own judgement — which is why they are admissible where a status field is
+not.
+
+`session` is the **conversation** id the harness hands you, never a run id. The hub splits a long
+conversation into runs wherever its activity went quiet for an hour, and the response's `run` field says
+which run this landed in (`abc-123`, then `abc-123:2`, and so on). Do not try to compute that yourself.
+
+`body` is truncated to 400 characters, sanitised, and **token-shaped words are replaced with `(redacted)`**
+before storing. `redacted: true` comes back when something was removed. The hub stores no secrets by rule,
+and this is the one path that redacts rather than refusing — nobody can rewrite a message that has already
+been said.
+
+---
+
 ## `GET /api/health`
 
 No auth. Opens the database, counts the five tables it needs, and names any missing credential.

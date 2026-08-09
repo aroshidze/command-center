@@ -80,6 +80,28 @@ export const MIN_BAR_PX = 3;
 
 export type BlockKind = 'measured' | 'running' | 'unterminated' | 'reconstructed';
 
+/**
+ * THE CONVERSATION A RUN BELONGS TO — `abc123` for a run recorded as `abc123:4`.
+ *
+ * A session id is not the unit of work, which is the owner's own finding and the one that invalidated the
+ * first version of this model: *"The session may never end… One open AI iteration can be live for several
+ * days."* So a long-lived session is recorded as several RUNS, split where the activity had a gap in it,
+ * and `:<n>` is the run's index within its conversation. `cc backfill` has always named its stretches this
+ * way — a colon rather than a hash, because the hub's session alphabet strips a hash and stretch `1`
+ * followed by `2` would then collide with stretch `12`.
+ *
+ * This exists because sub-agents CANNOT know which run they belong to. The hook that reports one is
+ * handed `session_id` by the harness and nothing else, so it posts the conversation's id; the run is a
+ * boundary the hub drew afterwards. Nesting therefore matches on the conversation and then resolves the
+ * run by asking which one was going at the time — see `ownerOf`.
+ */
+export function baseSession(session: string): string {
+    const cut = session.lastIndexOf(':');
+    if (cut <= 0) return session;
+    const tail = session.slice(cut + 1);
+    return /^[0-9]+$/.test(tail) ? session.slice(0, cut) : session;
+}
+
 export interface SubagentMark {
     id: string;
     type: string;
@@ -168,8 +190,20 @@ export interface TimelineView {
     total: number;
     running: number;
     subagents: number;
+    /**
+     * WHICH STATES THE PICTURE ACTUALLY CONTAINS — one flag per shape the key can name.
+     *
+     * The key is built from these rather than being written out in full, so it is as short as the chart
+     * is simple: a day in which nothing was reconstructed has no word about hatching in it. Computed
+     * here, where the shapes are decided, because a component counting kinds a second time is a second
+     * definition of the same thing and they drift.
+     */
+    anyRunning: boolean;
+    anyUnterminated: boolean;
     /** True when at least one block was reconstructed rather than observed. */
     anyReconstructed: boolean;
+    /** True when at least one span was too narrow to draw and became a mark. */
+    anyMark: boolean;
     /** True when at least one block runs off the left edge. */
     anyClipped: boolean;
 }
@@ -315,9 +349,49 @@ export function buildTimeline(
     const span = Math.max(1, to - from);
     const minPct = (MIN_BAR_PX / chartPx) * 100;
 
+    /*
+     * WHICH RUN SPAWNED THIS SUB-AGENT, and it is a question rather than a join now.
+     *
+     * Before runs were split at gaps, `subagents.session` and `presence.session` were the same string and
+     * this was a map lookup. It cannot be: the hook that reports a sub-agent knows the CONVERSATION it is
+     * in and the run is a boundary this hub drew later, so a sub-agent spawned in the third run of a
+     * three-day conversation arrives labelled with the conversation's id.
+     *
+     * So the runs of each conversation are collected first, and each sub-agent is attached to whichever
+     * one was going when it started. THE SAME RULE `cc backfill` USES CLIENT-SIDE — containment, falling
+     * back to the last run that had started — deliberately, because two rules for "which block owns this
+     * mark" is how a sub-agent ends up drawn twice or not at all.
+     */
+    const runsOfConversation = new Map<string, SessionRow[]>();
+    for (const s of sessions) {
+        const key = `${s.project}\0${baseSession(s.session)}`;
+        const list = runsOfConversation.get(key);
+        if (list) list.push(s); else runsOfConversation.set(key, [s]);
+    }
+    for (const list of runsOfConversation.values()) {
+        list.sort((a, b) => ms(a.started_at) - ms(b.started_at));
+    }
+
+    const ownerOf = (a: SubagentRow): string | null => {
+        const runs = runsOfConversation.get(`${a.project}\0${baseSession(a.session)}`);
+        if (!runs || !runs.length) return null;
+        const at = ms(a.started_at);
+        const inside = runs.find(r =>
+            at >= ms(r.started_at) && at <= ms(r.ended_at ?? r.last_seen_at));
+        if (inside) return inside.session;
+        /* Nothing contains it, which happens when a sub-agent outlived the last activity its parent ever
+         * reported. The last run that had already begun is the only defensible owner; a mark drawn past
+         * its parent's right edge is clamped to it, which is the shape that already existed for an
+         * unterminated block and is honest for the same reason. */
+        const begun = [...runs].reverse().find(r => ms(r.started_at) <= at);
+        return (begun ?? runs[0]).session;
+    };
+
     const byParent = new Map<string, SubagentRow[]>();
     for (const a of subagents) {
-        const key = `${a.project} ${a.session}`;
+        const owner = ownerOf(a);
+        if (!owner) continue;
+        const key = `${a.project}\0${owner}`;
         const list = byParent.get(key);
         if (list) list.push(a); else byParent.set(key, [a]);
     }
@@ -327,6 +401,8 @@ export function buildTimeline(
     let subagentCount = 0;
     let anyReconstructed = false;
     let anyClipped = false;
+    let anyUnterminated = false;
+    let anyMark = false;
 
     for (const s of sessions) {
         const kind = sessionKind(s, now);
@@ -346,9 +422,11 @@ export function buildTimeline(
 
         if (kind === 'running') running++;
         if (kind === 'reconstructed') anyReconstructed = true;
+        if (kind === 'unterminated') anyUnterminated = true;
         if (clippedLeft) anyClipped = true;
+        if (tick) anyMark = true;
 
-        const mine = byParent.get(`${s.project} ${s.session}`) ?? [];
+        const mine = byParent.get(`${s.project}\0${s.session}`) ?? [];
         const marks: SubagentMark[] = [];
         for (const a of mine) {
             const aStart = ms(a.started_at);
@@ -391,12 +469,13 @@ export function buildTimeline(
                 linesRemoved: a.lines_removed,
                 tick: aChartPct < minPct,
             });
+            if (aChartPct < minPct) anyMark = true;
             subagentCount++;
         }
         marks.sort((x, y) => x.left - y.left);
 
         const block: Block = {
-            key: `${s.project} ${s.agent} ${s.session}`,
+            key: `${s.project}\0${s.agent}\0${s.session}`,
             project: s.project,
             agent: s.agent,
             session: s.session,
@@ -452,7 +531,10 @@ export function buildTimeline(
         total: lanes.reduce((n, l) => n + l.blocks.length, 0),
         running,
         subagents: subagentCount,
+        anyRunning: running > 0,
+        anyUnterminated,
         anyReconstructed,
+        anyMark,
         anyClipped,
     };
 }

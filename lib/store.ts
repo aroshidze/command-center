@@ -1,8 +1,26 @@
 import { ensureSchema, sql, writeVerified, WriteFailed } from './db';
 import {
-    newApprovalId, newNoteId, newQuestionId, newSubagentId, newTaskId, KEY_RE, OPTION_KEY_RE,
+    newApprovalId, newNoteId, newQuestionId, newReportId, newSubagentId, newTaskId, KEY_RE,
+    OPTION_KEY_RE,
 } from './ids';
 import type { PresenceRow } from './presence';
+import {
+    REPORT_BODY_MAX, RUN_GAP_MINUTES, redactSecrets,
+} from './reports';
+import type { Report, ReportKind } from './reports';
+/*
+ * A VALUE IMPORT FROM `lib/timeline.ts`, AND IT IS SAFE IN THIS DIRECTION ONLY.
+ *
+ * `lib/timeline.ts` must stay loadable by Node's type-stripping — `tests/use-it.mjs` imports
+ * `buildTimeline` directly to assert the chart's arithmetic without a browser — so it may never import a
+ * value from anywhere. It imports two TYPES from this file, which are erased, so nothing here is
+ * reachable from it at runtime and this import cannot close a cycle. The rule to keep: things flow from
+ * timeline into store, never the other way.
+ *
+ * `baseSession` lives there rather than here because it is the one definition of what a run id means, and
+ * the module that draws the runs is where a reader looks for it.
+ */
+import { baseSession } from './timeline';
 import { MIN_GAP_MINUTES, nudgeStanding } from './reminders';
 import { sanitiseForDisplay, sanitiseToolName } from './sanitise';
 import { likePattern, score, terms } from './search';
@@ -1422,6 +1440,88 @@ function sessionId(v: unknown): string {
 }
 
 /**
+ * ==================================================================================================
+ * RUNS ARE CUT OUT OF ACTIVITY. A CONVERSATION IS NOT A RUN.
+ * ==================================================================================================
+ *
+ * This is his finding and it invalidated the model that shipped: *"The session may never end. I might
+ * start an agent, and it never ends… You just close the window and never open it again, but at some point
+ * you might want to open it again and chat with that AI. It never ends! One open AI iteration can be live
+ * for several days."*
+ *
+ * The old model recorded one row per session id, which meant an eleven-day conversation was one bar
+ * eleven days long and an agent that had been working all evening reported nothing at all until it
+ * stopped. Both are useless, and the second one is worse than useless — the page said *"Nothing has
+ * looked at Vibe Game Developing since 8 August"* over a project an agent was working in at that moment.
+ *
+ * THE ANSWER WAS ALREADY IN THE CODEBASE. `cc backfill` had to solve this exact problem to read
+ * transcripts, and its own note records the finding: *"a transcript turned out to be a conversation, not a
+ * session — one of yours spans eleven days — so files are split at half-hour gaps."* That is the correct
+ * model. It was applied to history and not to the live path, so the hub ran two definitions of a run and
+ * showed him the wrong one.
+ *
+ * So: every observation lands here, and a run is the stretch between gaps in them. The FIRST run of a
+ * conversation keeps the bare session id, so a short session records exactly what it always did and
+ * nothing about the common case changes; later runs are `<session>:<n>`, which is the naming `cc backfill`
+ * has always used.
+ *
+ * WHAT MAKES THIS SAFE TO ADD: it needs no new events and no timer. The split is decided by the next
+ * observation to arrive, so nothing has to fire to close a run — which is the property `SessionEnd` did
+ * not have and could not have.
+ */
+async function resolveRun(
+    proj: string, agent: string, conversation: string, now: number,
+): Promise<{ run: string; cut: boolean }> {
+    /*
+     * The SQL narrows and the JS decides. `like <id> || ':%'` cannot be trusted on its own because an
+     * underscore is a LIKE wildcard and a session id may contain one, so `a_b` would match `axb:1`;
+     * escaping that in the driver's template syntax is fiddly and easy to get subtly wrong. Narrowing
+     * with LIKE and then confirming with the same `baseSession` the timeline uses means one rule decides
+     * what belongs to a conversation, everywhere.
+     */
+    const rows = await sql()`
+        select session, started_at, last_seen_at, ended_at
+          from presence
+         where project = ${proj} and agent = ${agent}
+           and (session = ${conversation} or session like ${`${conversation}:`} || '%')
+         order by started_at desc
+         limit 200
+    ` as Row[];
+
+    const mine = rows.filter(r => baseSession(String(r.session)) === conversation);
+    if (!mine.length) return { run: conversation, cut: false };
+
+    const newest = mine[0];
+    const lastSeen = new Date(String(iso(newest.last_seen_at))).getTime();
+    const ended = newest.ended_at == null ? 0 : new Date(String(iso(newest.ended_at))).getTime();
+    const quietSince = Math.max(lastSeen, ended);
+    if (now - quietSince <= RUN_GAP_MINUTES * 60_000) {
+        return { run: String(newest.session), cut: false };
+    }
+
+    /*
+     * A GAP. The old run is closed AT THE LAST THING SEEN, never at now — the whole reason the timeline
+     * has an `unterminated` shape is that drawing a bar to the present over a stretch nobody observed is
+     * the overclaim this surface must never make. `end_reason` says `gap` rather than nothing, so the
+     * detail line can say why it ended and a reader is never left to assume a clean exit.
+     */
+    if (newest.ended_at == null) {
+        await sql()`
+            update presence
+               set ended_at = last_seen_at, end_reason = 'gap'
+             where project = ${proj} and agent = ${agent} and session = ${String(newest.session)}
+        `;
+    }
+
+    const highest = mine.reduce((max, r) => {
+        const s = String(r.session);
+        const tail = s.slice(conversation.length + 1);
+        return /^[0-9]+$/.test(tail) ? Math.max(max, Number(tail)) : max;
+    }, 1);
+    return { run: `${conversation}:${highest + 1}`, cut: true };
+}
+
+/**
  * A session started, or ended. One function for both, and that is deliberate.
  *
  * SessionStart and SessionEnd are the same row at two moments, so an UPSERT keyed on
@@ -1439,8 +1539,16 @@ export async function heartbeat(
 ): Promise<{ project: string; session: string; ended: boolean }> {
     await ensureSchema();
     const proj = project(input.project);
-    const session = sessionId(input.session);
+    const conversation = sessionId(input.session);
     const ending = input.ended === true || input.ended === 'true';
+    /*
+     * WHICH RUN AM I IN? Asked even at SessionEnd, and especially then: a conversation resumed after two
+     * days is on its third run, and closing the FIRST one would set an end time three days after the row
+     * it belongs to had already stopped. `resolveRun` returns the bare conversation id for a session that
+     * has only ever had one stretch, which is every short session and is why nothing about the common
+     * case changes.
+     */
+    const { run: session } = await resolveRun(proj, agent, conversation, Date.now());
 
     /*
      * The branch and the model are DISPLAYED, so they are sanitised here and not at render time — the
@@ -1499,6 +1607,175 @@ export async function heartbeat(
     });
 
     return { project: proj, session, ended: row.ended_at != null };
+}
+
+export interface ReportInput {
+    project: unknown;
+    session: unknown;
+    kind: unknown;
+    body?: unknown;
+    branch?: unknown;
+    model?: unknown;
+}
+
+const REPORT_KINDS: ReportKind[] = ['said', 'told', 'waiting'];
+
+function reportKind(v: unknown): ReportKind {
+    const s = str(v, 'kind', 20, true)!.toLowerCase();
+    if ((REPORT_KINDS as string[]).includes(s)) return s as ReportKind;
+    throw new Invalid(
+        `kind must be one of ${REPORT_KINDS.join(', ')} — "said" is what the assistant said, "told" is ` +
+        `what the human typed, "waiting" is the harness reporting that the agent needs a person. There ` +
+        `is deliberately no kind an agent invents for itself; see lib/reports.ts.`,
+    );
+}
+
+/**
+ * ==================================================================================================
+ * A REPORT: WHAT WAS SAID, BY WHOM, WHEN — and it is also the activity signal.
+ * ==================================================================================================
+ *
+ * ONE CALL DOES BOTH, and that is the design rather than a shortcut. A separate heartbeat endpoint plus a
+ * separate report endpoint would double the hook count, double the round trips at the end of every turn,
+ * and introduce the possibility of a hub that knows what an agent said but not that it was working — two
+ * records of one moment that can disagree. The `Stop` hook fires once per turn; that one call moves
+ * `last_seen_at`, cuts a new run if the conversation went quiet for an hour, and stores the words.
+ *
+ * ==================================================================================================
+ * WHY A `said` ROW IS NOT THE SELF-REPORTED STATUS THIS PROJECT REFUSES
+ * ==================================================================================================
+ *
+ * `lib/presence.ts` refuses a `doing` field and is right to: *"an agent asked to self-report health
+ * reports green, and a single green-while-you-slept status poisons every other indicator on the page."*
+ * The distinction is authorship and tense. A status is a claim about NOW that something has to keep true.
+ * These rows are quotes: the harness hands over `last_assistant_message`, the hub writes down what was
+ * said and when, and that stays true forever. The agent is not being asked how it is going — it is being
+ * overheard. See AGENTS.md: *can it name who said it and when?*
+ *
+ * THE BODY IS NOT TRUSTED. It is text nobody wrote for this database — the assistant's prose, or whatever
+ * he typed into a terminal — so it is truncated, sanitised for display at the boundary like every other
+ * shown string, and token-shaped words are redacted before the insert. `redactSecrets` redacts rather than
+ * refusing, which is the one place in this codebase that is right; the reasoning is on that function.
+ */
+export async function recordReport(
+    input: ReportInput, agent: string,
+): Promise<{ project: string; session: string; run: string; kind: ReportKind; redacted: boolean }> {
+    await ensureSchema();
+    const proj = project(input.project);
+    const conversation = sessionId(input.session);
+    const kind = reportKind(input.kind);
+
+    const raw = input.body == null || input.body === '' ? null : String(input.body);
+    let redacted = false;
+    let body: string | null = null;
+    if (raw) {
+        /*
+         * TRUNCATE FIRST, THEN REDACT. The other order wastes work on prose that is about to be thrown
+         * away, and worse, it could redact a secret in the tail of a message and then cut the redaction
+         * marker off — leaving a message that says nothing about having been shortened OR cleaned.
+         */
+        const shown = sanitiseForDisplay(raw, REPORT_BODY_MAX, '(nothing was said)');
+        const safe = redactSecrets(shown.text, findSecret);
+        redacted = safe.redacted;
+        body = safe.text;
+    }
+
+    /* The activity update comes FIRST, so a report always has a run to belong to even if the insert
+     * below fails — presence going stale is the failure this whole feature exists to remove, and it is
+     * the half that must survive. */
+    const { run } = await resolveRun(proj, agent, conversation, Date.now());
+    const branch = input.branch == null || input.branch === ''
+        ? null : sanitiseForDisplay(input.branch as string, 60, '(unnamed branch)').text;
+    const model = input.model == null || input.model === ''
+        ? null : sanitiseToolName(input.model as string);
+    await sql()`
+        insert into presence (project, agent, session, kind, last_seen_at, branch, model)
+        values (${proj}, ${agent}, ${run}, 'session', now(), ${branch}, ${model})
+        on conflict (project, agent, session) do update
+            set last_seen_at = now(),
+                branch = coalesce(${branch}, presence.branch),
+                model = coalesce(${model}, presence.model),
+                /* Activity RE-OPENS a run, for the same reason a resumed session does: a run closed by a
+                   SessionEnd that fired on a compaction, and then worked in for another hour, is running.
+                   The gap test in resolveRun is what decides whether this is the same run at all. */
+                ended_at = null, end_reason = null
+    `;
+
+    const id = newReportId();
+    await writeVerified<Row>({
+        what: `record what was said in ${proj}`,
+        write: () => sql()`
+            insert into reports (id, project, agent, session, kind, body)
+            values (${id}, ${proj}, ${agent}, ${conversation}, ${kind}, ${body})
+            returning *
+        ` as Promise<Row[]>,
+        reread: () => sql()`select * from reports where id = ${id}` as Promise<Row[]>,
+        expect: r => {
+            if (String(r.project) !== proj) return `project is "${String(r.project)}"`;
+            if (String(r.kind) !== kind) return `kind is "${String(r.kind)}"`;
+            if ((r.body == null ? null : String(r.body)) !== body) {
+                return 'the stored text is not what was sent';
+            }
+            return null;
+        },
+    });
+
+    return { project: proj, session: conversation, run, kind, redacted };
+}
+
+function mapReport(r: Row): Report {
+    return {
+        id: String(r.id),
+        project: String(r.project),
+        agent: String(r.agent),
+        session: String(r.session),
+        kind: String(r.kind) as ReportKind,
+        body: r.body == null ? null : String(r.body),
+        at: iso(r.at)!,
+    };
+}
+
+/**
+ * How many reports any read is ever willing to return. Four hundred.
+ *
+ * A `said` row per turn means this table grows faster than anything else the hub stores, so the ceiling is
+ * in the query rather than in a comment about being careful — §XXVI was a session spent removing a payload
+ * cliff caused by less. Four hundred is about a fortnight of one project's conversation, and every reader
+ * either wants the newest few or one project's thread.
+ */
+export const REPORTS_MAX = 400;
+
+/**
+ * THE NEWEST REPORT PER CONVERSATION, across every project. Bounded by conversations, not by time.
+ *
+ * `distinct on` is the same shape `presenceRows` uses and for the same reason: what the hub root needs is
+ * "who is waiting for me", which is one row per conversation, and reading the whole log to fold it down to
+ * that would be linear in his usage. Windowed as well, because a conversation nobody has touched in a
+ * fortnight is history and the root page is not history.
+ */
+export async function latestReports(days = TIMELINE_DAYS): Promise<Report[]> {
+    await ensureSchema();
+    const rows = await sql()`
+        select distinct on (project, session) id, project, agent, session, kind, body, at
+          from reports
+         where at > now() - (${days} || ' days')::interval
+         order by project, session, at desc
+    ` as Row[];
+    return rows.map(mapReport).sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+}
+
+/** One project's conversation, newest first, capped. */
+export async function projectReports(slug: string, limit = 60): Promise<Report[]> {
+    await ensureSchema();
+    const proj = project(slug);
+    const rows = await sql()`
+        select id, project, agent, session, kind, body, at
+          from reports
+         where project = ${proj}
+         order by at desc
+         limit ${Math.min(Math.max(1, Math.round(limit)), REPORTS_MAX)}
+    ` as Row[];
+    return rows.map(mapReport);
 }
 
 /**
@@ -2529,11 +2806,110 @@ export async function agentsView(): Promise<{
     sessions: SessionRow[];
     subagents: SubagentRow[];
     spend: SpendRow[];
+    /** The newest report per conversation — one row each, never the log. See `latestReports`. */
+    reports: Report[];
 }> {
-    const [projectList, presence, sessions, subagents, spend] = await Promise.all([
-        projects(), presenceRows(), sessionWindow(), subagentWindow(), spendRows(),
+    const [projectList, presence, sessions, subagents, spend, reports] = await Promise.all([
+        projects(), presenceRows(), sessionWindow(), subagentWindow(), spendRows(), latestReports(),
     ]);
-    return { projects: projectList, presence, sessions, subagents, spend };
+    return { projects: projectList, presence, sessions, subagents, spend, reports };
+}
+
+/**
+ * ==================================================================================================
+ * ONE PROJECT, EVERYTHING THE HUB KNOWS ABOUT IT — the read behind `/p/<slug>`.
+ * ==================================================================================================
+ *
+ * His words, and they are the specification: *"I want to open one of my projects and see what the AI has
+ * done, where they are, what they have reported, how they are working… This hub must be my command center
+ * where I control all of my projects, or my agents, all of my sub-agents, everyone and everything."*
+ *
+ * SIX READS, CONCURRENT, EVERY ONE OF THEM SCOPED OR BOUNDED. The page's whole risk is that it is per
+ * project and there is no ceiling on projects — so nothing here reads a table whole. `tasks` and
+ * `questions` are filtered in SQL rather than by fetching `board()` and discarding: `board()` returns the
+ * open work of every project plus a window of finished history, which is exactly the payload cliff
+ * §XXVI removed from the queue, and it would arrive here once per project page view.
+ *
+ * WHAT IS DELIBERATELY NOT SCOPED: `sessionWindow` and `subagentWindow`. The chart needs both, they are
+ * already capped by time and by row count, and the page filters to its own lanes. Adding project-scoped
+ * copies of two bounded reads would be a second definition of "the window", and two windows disagreeing
+ * about what a fortnight is would put a run on one page and not the other.
+ */
+export async function projectView(slug: string): Promise<{
+    project: string;
+    known: boolean;
+    presence: PresenceRow[];
+    sessions: SessionRow[];
+    subagents: SubagentRow[];
+    reports: Report[];
+    openQuestions: Question[];
+    answeredQuestions: Question[];
+    openTasks: Task[];
+    doneTasks: Task[];
+    notes: Note[];
+    approvals: Approval[];
+    spend: SpendRow[];
+}> {
+    await ensureSchema();
+    const proj = project(slug);
+
+    const [presence, sessions, subagents, reports, questionRows, taskRows, noteRows, approvals, spend]
+        = await Promise.all([
+            presenceRows(),
+            sessionWindow(),
+            subagentWindow(),
+            projectReports(proj),
+            sql()`
+                select * from questions
+                 where project = ${proj}
+                 order by case when status = 'open' then 0 else 1 end,
+                          coalesce(answered_at, created_at) desc
+                 limit 120
+            ` as Promise<Row[]>,
+            sql()`
+                select * from tasks
+                 where project = ${proj} and status <> 'dropped'
+                 order by case when status = 'open' then 0 else 1 end,
+                          coalesce(done_at, created_at) desc
+                 limit 120
+            ` as Promise<Row[]>,
+            sql()`
+                select * from notes where project = ${proj} order by created_at desc limit 40
+            ` as Promise<Row[]>,
+            liveApprovals(),
+            spendRows(),
+        ]);
+
+    const questions = questionRows.map(mapQuestion);
+    const tasks = taskRows.map(mapTask);
+
+    /*
+     * `known` is the honest version of "does this project exist", and it is not a row in a table. There is
+     * no projects table — a project is a slug that something has filed work or activity under — so the
+     * question a 404 has to answer is whether anything at all mentions it. Getting this wrong in either
+     * direction is bad: a typo'd URL that renders an authoritative empty page says the project is quiet
+     * when it does not exist, and a real-but-idle project 404ing hides work he has open.
+     */
+    const known = presence.some(p => p.project === proj)
+        || questions.length > 0 || tasks.length > 0 || noteRows.length > 0
+        || reports.length > 0
+        || spend.some(s => s.project === proj && s.samples > 0);
+
+    return {
+        project: proj,
+        known,
+        presence: presence.filter(p => p.project === proj),
+        sessions: sessions.filter(s => s.project === proj),
+        subagents: subagents.filter(s => s.project === proj),
+        reports,
+        openQuestions: questions.filter(q => q.status === 'open'),
+        answeredQuestions: questions.filter(q => q.status !== 'open'),
+        openTasks: tasks.filter(t => t.status === 'open'),
+        doneTasks: tasks.filter(t => t.status === 'done'),
+        notes: noteRows.map(mapNote),
+        approvals: approvals.filter(a => a.project === proj),
+        spend: spend.filter(s => s.project === proj),
+    };
 }
 
 /** Every spend row, from every source. The page sums them; nothing here decides anything. */

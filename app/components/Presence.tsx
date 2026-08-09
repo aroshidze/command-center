@@ -77,7 +77,18 @@ export function ProjectRow({ p, sentence, spend, onRefused }: {
         >
             <span className="pdot" style={{ background: projectColor(p.project) }} />
             <span className="preswhat">
-                <span className="presname">{p.project}</span>
+                {/*
+                  * THE NAME IS THE WAY IN. *"Everything must be connected if it's connectable"* — and this
+                  * row is the only place in the hub that names every project, so it is the door to each
+                  * one's own page.
+                  *
+                  * An `<a>` and not a button: it is a navigation to a document, so it must middle-click,
+                  * open in a new tab and be readable by a screen reader as a link. The row already carries
+                  * one control (`Ask it to report in`) and putting a second BUTTON beside it would make two
+                  * things that look alike do different kinds of thing.
+                  */}
+                <a className="presname aslink" href={`/p/${encodeURIComponent(p.project)}`}
+                   data-measure="project-link">{p.project}</a>
                 {/* The honest line. `data-sentence` so a check can read it without depending on how the
                     surrounding markup is laid out — check A3 asserts the no-"you" rule over all four states. */}
                 <span className={`pressay s-${p.state}`} data-measure="presence-line">{sentence}</span>

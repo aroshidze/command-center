@@ -249,27 +249,43 @@ If he asks for any of them, run the command in that project's folder. Each write
 \`.claude/settings.json\` and **no token goes into that file**, so it is safe to commit. Add \`--dry\` to see
 what would change, and \`off\` undoes it.
 
-**1. Can he tell whether anything is running here?**
+**1. Can he see what is happening here, and what you said about it?**
 
 \`\`\`bash
 node "$HOME/.command-center/cc.mjs" presence on
 \`\`\`
 
-Six hooks now, and they do two jobs. Two are the heartbeat — one when a session starts, one when it ends —
-so the hub can say *"nothing has looked at ${slug} since 28 Jul"* instead of showing an empty queue that
-looks identical to a dead agent. They report the project, the git branch and the model. **There is no field
-for what you are doing, and that is deliberate:** an agent asked to describe its own state describes it
-favourably, and one cheerful status would make every other signal on that page worthless.
+Nine hooks, doing three jobs.
 
-The other four record **one row per sub-agent** — what was spawned, what it was asked to do, how long it
-ran and how it ended — so \`/agents\` can show them nested inside the session that spawned them. They are
-matched to the Task/Agent tool alone, so **an ordinary Read, Edit or Bash call fires nothing**. That
-restriction is the whole reason this is allowed to exist: a session makes hundreds of tool calls, and a hook
-on every one of them would be a firehose into the same database your \`sync\` reads.
+**Two are the heartbeat** — one when a session starts, one when it ends — so the hub can say *"nothing has
+looked at ${slug} since 28 Jul"* instead of showing an empty queue that looks identical to a dead agent.
+They report the project, the git branch and the model. **There is no field for what you are doing, and that
+is deliberate:** an agent asked to describe its own state describes it favourably, and one cheerful status
+would make every other signal on that page worthless.
 
-Nothing about this changes how you should work. There is no reason to spawn fewer sub-agents, or more, or to
-describe them differently — the \`description\` you already give the Task tool is what he reads, so a useful
-one is worth writing for its own sake.
+**Four record one row per sub-agent** — what was spawned, what it was asked to do, how long it ran and how
+it ended — so the project page can show them nested inside the run that spawned them. They are matched to
+the Task/Agent tool alone, so **an ordinary Read, Edit or Bash call fires nothing**. That restriction is the
+whole reason this is allowed to exist: a session makes hundreds of tool calls, and a hook on every one of
+them would be a firehose into the same database your \`sync\` reads.
+
+**Three report what was said.** At the end of every turn, the hub is sent the last thing you actually said —
+the harness hands it over, you are not asked to summarise anything. It also gets what he typed, and it gets
+told when the harness says you are waiting for a person. Those three make \`/p/${slug}\` a conversation he
+can follow from his phone with the laptop shut, and they are why the hub can now tell him *which* agent is
+blocked and on what, rather than only that something once ran here.
+
+Two things follow for how you work:
+
+- **Your last paragraph of a turn is read by a human, on a page, later.** It was always worth writing
+  clearly; now it is the thing he sees when he opens the project. End a turn with what changed and what is
+  next, not with "Done!".
+- **Nothing here asks you to grade yourself, and you should not start.** The hub stores quotes with times on
+  them. If something is going badly, say so in the ordinary way — in the turn, or better, as a decision he
+  can answer.
+
+If he would rather no message text left the machine, \`presence on --no-words\` installs the same hooks and
+sends the activity without the words. Everything except the conversation still works.
 
 Without any of it he still gets a rougher version of the presence half from your syncs, so this is an
 improvement rather than a prerequisite.

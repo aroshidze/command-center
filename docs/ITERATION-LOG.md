@@ -4233,3 +4233,108 @@ questions rather than defects.
 | themes and widths | both schemes at 1280 and 1920; crops read at 2x and 3x |
 | rubric dimensions at parity or better | **16 of 16** — §XXXI's twelve unchanged, four added for the chart |
 | claims of mine a measurement disproved | **14** |
+
+---
+
+## XXXIII. A conversation is not a session, and the harness was already telling us what was said
+
+**9 August 2026.** He compacted my context and then said the thing that reframed the work:
+
+> *"A lot of research has been done but if you need any additional research, you are free to do anything… I
+> want you to manage this in the complete and best possible way… The main goal is, again, that I open the hub,
+> I see everything, and I control everything."*
+
+### What the research turned up, and why it changed the plan rather than confirming it
+
+`docs/RIVALS.md` is the research he had asked for twice and had not got. The decisive finding was not about a
+competitor: **Anthropic shipped Agent View on 11 May 2026** — a session roster inside Claude Code that leads
+with *needs your input* and shows **the contents of each session's last response**, with a peek panel to
+answer a blocking question in place. Remote Control pushes permission prompts to a phone.
+
+Two of this hub's features are now things the vendor does natively. What that clarified is where the hub is
+still the only answer: Agent View is a terminal on one machine, and the loudest complaint in every 2026
+comparison is *"running 5 to 10 sessions across multiple machines, projects and git branches quickly became
+unmanageable — sometimes only rediscovering abandoned work hours or days later."*
+
+That is this hub's subject, described by somebody else as unsolved.
+
+### The finding that mattered most was in the hook documentation
+
+`Stop` fires once per turn and carries **`last_assistant_message`**. `Notification` carries
+**`notification_type`**, with `agent_needs_input`, `idle_prompt` and `permission_prompt` among its values.
+
+Both of those are the harness reporting about the agent, which is the distinction the whole design turned on.
+`lib/presence.ts` refuses — and still refuses — any field an agent fills in about its own state, because *"an
+agent asked to self-report health reports green."* That refusal is why the hub had nothing to show when he
+asked five times to see what his agents were doing. It was never the wrong rule; it was aimed at authorship,
+and there was an unused channel where **the author is the harness**.
+
+So: `reports`, three kinds, every row a quote with a name and a time on it. **The test is not "is this a
+status" but "can it name who said it and when".**
+
+### Six claims of mine that a measurement disproved
+
+1. **"The legend is fixed."** It was uncommitted and did not compile: the swatch list referenced three view
+   flags that did not exist and four CSS classes that did not either. `npm run typecheck` in three seconds.
+2. **`lib/timeline.ts` could not be searched at all.** It carried four raw NUL bytes — a `\0` escape that a
+   Write turned into the character it denotes — so ripgrep classified it as binary and **silently refused to
+   search it**. A grep for `anyRunning` came back empty on the one file that was the whole question. A source
+   file that cannot be searched is a trap for every future session.
+3. **`--warn` does not exist in this codebase.** The waiting row — the loudest thing on the page — was written
+   against it, so the tint, the border, the inset edge and the pip were all invalid and fell back to
+   transparent. At 1x it looked like unstyled text. Found by reading the COMPUTED style: `padding` had applied
+   and `background-color` was `rgba(0,0,0,0)`, which is the signature of a bad token rather than a bad
+   selector. `--ask` already existed and already means *a decision is waiting*.
+4. **A class in `@layer components` cannot reserve room next to a `button`.** `.phead { padding: 4px 52px … }`
+   measured as `4px 12px`, because `@layer desktop` contains a bare `button { padding: 4px 12px }` and a later
+   layer beats an earlier one whatever the specificity. The task count ran underneath the new link. The same
+   trap is documented forty lines above it about `.crestbtn`. Fixed by taking the room on `.pmeta`'s
+   `margin-right`, a property nothing else contests.
+5. **The project page stated the same thing twice.** The header shows the newest thing each agent said and the
+   thread is chronological, so the identical three sentences appeared four hundred pixels apart. Now excluded
+   by id *before* the thread's cap is applied — filtering afterwards would silently shorten the thread by
+   however much the header happened to be showing.
+6. **A screenshot of anything below the fold was a black rectangle.** `Page.captureScreenshot` with a clip
+   needs `captureBeyondViewport`; without it the crop is taken from a viewport that does not contain the
+   element. A black PNG reads exactly like a component that failed to render. Trap 8 says a screenshot proves
+   it rendered and not that it landed — a black one does not prove even that.
+
+And one the suites caught rather than a measurement: **`prove:parse` named a backtick inside a comment inside
+an `evaluate` template literal** in the new R3 check. Trap 1, written minutes after reading the warning.
+
+### What R3 refused to let me get away with
+
+The new key had entries for `k-done`, `k-mark` and `k-clipped`. R3 asserts that the legend explains every
+kind the chart draws **and no others**, and it failed: those are not kinds. `k-done` was `measured` under
+another name, and a tick and a clipped edge are MODIFIERS that can appear on a block of any kind.
+
+The fix was to name them for what they are — `k-measured`, `m-tick`, `m-clipped` — and then to **strengthen**
+R3 with the symmetric rule for modifiers, plus an injection that removes the mark entries and watches the
+check notice. The prose assertion it used to make (`/watched from start to finish/`) is gone: the key is six
+words of swatches now, and a regex on the copy would only pin the wording in place.
+
+### The final state, measured on the tree as it stands
+
+| | |
+|---|---|
+| suites | typecheck, parse (17 files), hooks (20), docs (31 documents), prove (72), negative (27), use (34), audit (140 walks), palette, ladder, layout |
+| new checks | 3 in `prove` (report stored, credential redacted, runs split at a gap), 6 in `prove:hooks` (each field by name, both refusals), P1–P4 in `prove:use` with an injection for the duplicate test, R3 strengthened with a modifier rule and its own injection |
+| new schema | `reports`. One additive table and two indexes; safe to apply twice |
+| new pages | `/p/<slug>`, in the audit walk from the day it shipped — which `/agents` was not, and that is why he found in twenty seconds what twenty-three green checks had missed |
+| pages looked at | `/p/harbour-lights` and `/p/cold-brew`, dark and light, 1440 and 390, crops at 2x–4x |
+| claims of mine a measurement disproved | **6**, plus one caught by `prove:parse` |
+
+### For whoever is next
+
+- **`docs/RIVALS.md` §4 is the honest list of what is still missing.** Cost per run rather than per project;
+  `TaskCreated`/`TaskCompleted` to show an agent's own plan, whose payload shape must be MEASURED before a
+  column is added for it; sub-agent nesting deeper than one; and the §XXXI rubric has not been re-scored
+  against the new page.
+- **Do not add a fourth report kind without asking one question:** could an agent make itself look good by
+  choosing what to put in it? If yes, it is a status field with a new name, and the refusal in
+  `lib/presence.ts` applies.
+- **`RUN_GAP_MINUTES` must stay larger than `LIVE_MINUTES`.** Cutting a run sets `ended_at`, and a closed run
+  inside the live window reads as *"it ran and stopped"* — so a shorter gap would report a working agent as
+  finished. The relationship is the constraint, not either number.
+- **Done still means he opens it and says it is good.** Nothing above changes that, and four previous passes
+  were graded by the agent that wrote the goals.

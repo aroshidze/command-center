@@ -2040,29 +2040,62 @@ await check('R3 — the chart states every kind of claim it is drawing, and no o
      */
     await b.goto('/agents');
     const m = await b.evaluate(`(() => {
-        const kinds = new Set([...document.querySelectorAll('[data-measure="run-block"]')]
-            .map(el => el.dataset.kind));
+        const blocks = [...document.querySelectorAll('[data-measure="run-block"]')];
+        const kinds = new Set(blocks.map(el => el.dataset.kind));
+        /*
+         * THE TWO THINGS THAT ARE NOT KINDS. A tick is a span too narrow to draw as a bar and a clip is a
+         * left edge that is a crop rather than a start — both are modifiers on a block of any kind, so they
+         * cannot live in the same namespace as data-kind without one rule contradicting the other.
+         * NO BACKTICKS IN HERE: this comment is inside a template literal and a pair of them closes it.
+         * Trap 1 in AGENTS.md, and prove:parse named the line in three seconds.
+         */
+        const mods = new Set();
+        for (const el of blocks) {
+            if (el.classList.contains('istick')) mods.add('tick');
+            if (el.classList.contains('clipped')) mods.add('clipped');
+        }
         const legend = document.querySelector('[data-measure="run-legend"]');
         if (!legend) return { none: true };
-        const keys = new Set([...legend.querySelectorAll('.runkey')]
-            .map(el => [...el.classList].find(c => c.indexOf('k-') === 0)));
-        return { kinds: [...kinds], keys: [...keys], text: legend.textContent };
+        const swatches = [...legend.querySelectorAll('.runkey')];
+        const keys = new Set(swatches
+            .map(el => [...el.classList].find(c => c.indexOf('k-') === 0)).filter(Boolean));
+        const modKeys = new Set(swatches
+            .map(el => [...el.classList].find(c => c.indexOf('m-') === 0)).filter(Boolean));
+        return {
+            kinds: [...kinds], keys: [...keys], mods: [...mods], modKeys: [...modKeys],
+            text: legend.textContent,
+        };
     })()`);
     if (m.none) return 'NOT MEASURED — nothing ran in the window, so there is no legend';
 
-    /* `measured` has no swatch: it is the default the sentence opens by describing, so its presence is
-     * asserted on the words rather than on a key. */
-    const missing = m.kinds.filter(k => k !== 'measured' && !m.keys.includes(`k-${k}`));
-    const extra = m.keys.filter(k => k !== undefined
-        && !m.kinds.includes(k.slice(2)) && k !== 'k-measured');
+    const missing = m.kinds.filter(k => !m.keys.includes(`k-${k}`));
+    /* `k-measured` is exempt from the "nothing extra" half and from nothing else: it is the ordinary bar,
+     * it is always in the key because a key whose first entry is missing reads as a gap, and a window
+     * containing only running blocks is a legitimate state in which it explains nothing that is drawn. */
+    const extra = m.keys.filter(k => !m.kinds.includes(k.slice(2)) && k !== 'k-measured');
+    const missingMods = m.mods.filter(k => !m.modKeys.includes(`m-${k}`));
+    const extraMods = m.modKeys.filter(k => !m.mods.includes(k.slice(2)));
     assert(missing.length === 0,
         `the chart draws ${missing.join(', ')} and the legend never mentions ${missing.length === 1
             ? 'it' : 'them'}`);
     assert(extra.length === 0,
         `the legend explains ${extra.join(', ')}, which nothing on the chart is drawing`);
-    assert(/watched from start to finish/.test(m.text),
-        'the legend never says what an ordinary bar means');
-    return `${m.kinds.length} kind(s) drawn — ${m.kinds.join(', ')} — and the legend covers each`;
+    assert(missingMods.length === 0,
+        `the chart draws ${missingMods.join(', ')} marks with nothing in the key for them`);
+    assert(extraMods.length === 0,
+        `the legend explains ${extraMods.join(', ')}, which nothing on the chart is drawing`);
+    /*
+     * THE ORDINARY BAR IS ASSERTED STRUCTURALLY, and this replaced a regex.
+     *
+     * It used to look for the phrase "watched from start to finish" in the legend's prose, which was the
+     * only way to check it while the key WAS prose. It is now a row of swatches — five sentences and 130px
+     * became six words, which is what its owner asked for four times — so the presence of the entry is a
+     * property of the markup and a check on the wording would only pin the copy in place.
+     */
+    assert(m.keys.includes('k-measured'),
+        'the key has no entry for an ordinary bar, so nothing says what the plain shape means');
+    return `${m.kinds.length} kind(s) and ${m.mods.length} mark(s) drawn — `
+        + `${[...m.kinds, ...m.mods].join(', ')} — and the key covers each`;
 });
 
 await check('R3-inj — a kind drawn with nothing explaining it is caught', async () => {
@@ -2079,12 +2112,40 @@ await check('R3-inj — a kind drawn with nothing explaining it is caught', asyn
         const keys = new Set([...legend.querySelectorAll('.runkey')]
             .map(x => [...x.classList].find(c => c.indexOf('k-') === 0)));
         const missing = [...kinds].filter(k => k !== 'measured' && !keys.has('k-' + k));
-        return { caught: missing.length > 0 };
+
+        /*
+         * AND THE MODIFIER HALF, injected the same way. R3 gained a second rule — every tick and every
+         * clipped edge needs an entry too — and a rule with no injection behind it is a rule nobody has
+         * watched fail. Both keys are removed from the DOM here rather than a class being planted, because
+         * a MISSING entry is the actual defect: the entries are conditional on the chart's own flags, so
+         * the way this breaks is a flag that stops being set.
+         */
+        const before = [...legend.querySelectorAll('.runkey')]
+            .filter(x => [...x.classList].some(c => c.indexOf('m-') === 0)).length;
+        for (const x of [...legend.querySelectorAll('.runkey')]) {
+            if ([...x.classList].some(c => c.indexOf('m-') === 0)) x.closest('li').remove();
+        }
+        const drawnMods = [...document.querySelectorAll('[data-measure="run-block"]')]
+            .some(x => x.classList.contains('istick') || x.classList.contains('clipped'));
+        const modKeys = new Set([...legend.querySelectorAll('.runkey')]
+            .map(x => [...x.classList].find(c => c.indexOf('m-') === 0)).filter(Boolean));
+        return {
+            caught: missing.length > 0,
+            modsMeasurable: before > 0 && drawnMods,
+            modsCaught: drawnMods && modKeys.size === 0,
+        };
     })()`);
     if (caught.none) return 'NOT MEASURED — no chart on the page';
     assert(caught.caught === true,
         'a block kind with no legend entry was not caught, so R3 proves nothing');
-    return 'a block drawn in a kind the legend does not explain is caught';
+    /* NOT MEASURED rather than a pass, if the fixture happens to draw no ticks and no clipped edges — a
+     * check with no subject must never report success. `tests/fixture.mjs` plants both on purpose. */
+    if (!caught.modsMeasurable) {
+        return 'a kind with no key is caught; NOT MEASURED for marks — the chart drew none';
+    }
+    assert(caught.modsCaught === true,
+        'the key lost every mark entry while the chart still drew marks, and R3 did not notice');
+    return 'a kind with no key is caught, and so is a mark whose key entry has gone';
 });
 
 await check('R4 — choosing a run shows what it spawned, and moves nothing', async () => {
@@ -2151,6 +2212,181 @@ await check('R4 — choosing a run shows what it spawned, and moves nothing', as
         `the bar that was pressed moved ${m.barMoved}px, which is the one thing a chart may never do`);
     return `a run with ${m.lines} sub-agent(s) opened; the chart and the bar pressed both stayed put`;
 });
+
+/* ============================================================================================ P — one project
+ *
+ * `/p/<slug>` is the page its owner asked for four times and did not get: *"I want to open one of my projects
+ * and see what the AI has done, where they are, what they have reported, how they are working… This hub must
+ * be my command center where I control all of my projects."*
+ *
+ * The word that makes these checks necessary rather than decorative is CONTROL. A page that shows a project
+ * is a view; a page he can act from is the product. So P2 answers a real decision through this page and reads
+ * the row back out of the database, which is the same standard every other action in this suite is held to.
+ * ========================================================================================== */
+
+/**
+ * The first project page that actually has words on it, or null.
+ *
+ * WHY THIS IS A SEARCH RATHER THAN THE FIRST LINK. `foldProjects` puts the QUIET projects first, deliberately
+ * — a project nothing has looked at is a finding and reassurance is not — so the first link on `/agents` is
+ * the one least likely to have anything reported against it. P3 keyed on it and honestly reported NOT
+ * MEASURED, which is the right behaviour for a check with no subject and the wrong outcome for a check that
+ * had a subject two rows further down.
+ */
+async function firstProjectWithWords() {
+    await b.goto('/agents');
+    const hrefs = await b.evaluate(`(() => JSON.stringify(
+        [...document.querySelectorAll('[data-measure="project-link"]')].map(a => a.getAttribute('href'))
+    ))()`);
+    for (const href of JSON.parse(hrefs)) {
+        await b.goto(href);
+        const has = await b.evaluate('document.querySelectorAll(".wordbody").length > 0 ? "y" : "n"');
+        if (has === 'y') return href;
+    }
+    return null;
+}
+
+await check('P1 — a project page opens from the list and carries that project only', async () => {
+    /*
+     * THE LINK IS PART OF THE CLAIM. *"Everything must be connected if it's connectable"* — a project page
+     * nothing links to is a page nobody finds, and the presence list is the only surface that names every
+     * project. So this navigates the way he would: press the name, land on the page.
+     */
+    await b.goto('/agents');
+    const link = await b.evaluate(`(() => {
+        const a = document.querySelector('[data-measure="project-link"]');
+        if (!a) return { none: true };
+        return { href: a.getAttribute('href'), name: a.textContent.trim() };
+    })()`);
+    if (link.none) return 'NOT MEASURED — no project row on the page to open';
+
+    await b.goto(link.href);
+    const m = await b.evaluate(`(() => {
+        const name = document.querySelector('[data-measure="project-name"]');
+        const lanes = [...document.querySelectorAll('[data-measure="run-lane"]')]
+            .map(el => el.dataset.project);
+        const words = [...document.querySelectorAll('[data-measure="word-row"]')].length;
+        const items = [...document.querySelectorAll('[data-measure="thread-item"]')].length;
+        const compose = document.querySelector('[data-measure="thread-compose"]');
+        return {
+            name: name ? name.textContent.trim() : null,
+            lanes: [...new Set(lanes)],
+            words, items, compose: !!compose,
+        };
+    })()`);
+    assert(m.name === link.name,
+        `the list linked to ${link.name} and the page says ${JSON.stringify(m.name)}`);
+    /*
+     * ONE LANE, AND IT IS THIS PROJECT'S. The chart is built from a window that spans every project, and the
+     * page filters it — so a second lane here would mean another project's runs were drawn on this page,
+     * which is the kind of leak no screenshot would reveal.
+     */
+    assert(m.lanes.every(p => p === link.name),
+        `the chart on ${link.name}'s page draws lanes for ${m.lanes.join(', ')}`);
+    assert(m.compose, 'there is no way to say anything back, so the page is a view rather than a desk');
+    return `${link.name}: ${m.words} latest word(s), ${m.items} thread item(s), `
+        + `${m.lanes.length} lane — its own`;
+});
+
+await check('P2 — a decision can be ANSWERED from a project page, and the row changes', async () => {
+    /*
+     * The control claim, checked the only way it can be: press the button on THIS page and read the database.
+     * `QuestionCard` is imported rather than reimplemented here, and this is what proves the import actually
+     * reaches the same write path instead of rendering an inert copy of the card.
+     */
+    const open = await openQuestions();
+    const target = open.find(q => q.options && q.options.length > 0);
+    if (!target) return 'NOT MEASURED — no open decision with options to answer';
+
+    await b.goto(`/p/${target.project}`);
+    const pressed = await b.evaluate(`(() => {
+        const card = [...document.querySelectorAll('[data-measure="decision"]')]
+            .find(el => el.textContent.includes(${JSON.stringify(target.title.slice(0, 40))}));
+        if (!card) return { none: true };
+        const pick = card.querySelector('[data-measure="pick"]');
+        if (!pick) return { noPick: true };
+        pick.click();
+        return { clicked: true };
+    })()`);
+    if (pressed.none) return 'NOT MEASURED — that decision is not on this project page';
+    assert(!pressed.noPick, 'the decision rendered with nothing to press');
+
+    /* Polled rather than slept on a fixed delay: the write is a round trip to Neon and a fixed wait either
+     * flakes or is always too long. */
+    let row = null;
+    for (let i = 0; i < 40 && !row; i++) {
+        await new Promise(r => setTimeout(r, 150));
+        const [got] = await (await import('@neondatabase/serverless')).neon(process.env.DATABASE_URL)`
+            select status, answer_option, answered_at from questions where id = ${target.id}`;
+        if (got && got.status !== 'open') row = got;
+    }
+    assert(row != null, 'pressing an option on a project page never reached the database');
+    assert(row.answered_at != null, 'the decision was closed with no answered_at, so the record loses it');
+    return `answered from /p/${target.project} — status ${row.status}, option ${row.answer_option}`;
+});
+
+await check('P3 — the newest word is not stated twice on the same page', async () => {
+    /*
+     * A DEFECT THIS PAGE SHIPPED WITH FOR ONE RENDER. The header shows the newest thing each agent said and
+     * the thread is chronological, so the same three sentences appeared four hundred pixels apart. This
+     * codebase treats the same fact stated twice as a defect, and it is one: a second copy makes a reader
+     * stop and check whether it is really the same item.
+     */
+    const href = await firstProjectWithWords();
+    if (!href) return 'NOT MEASURED — no project on this hub has any reported words';
+    await b.goto(href);
+    const m = await b.evaluate(`(() => {
+        const norm = s => s.replace(/\\s+/g, ' ').trim();
+        const words = [...document.querySelectorAll('.wordbody')].map(el => norm(el.textContent));
+        const thread = [...document.querySelectorAll('[data-measure="thread-item"] .thbody')]
+            .map(el => norm(el.textContent));
+        return { words, repeated: words.filter(w => w.length > 20 && thread.includes(w)) };
+    })()`);
+    if (!m.words.length) return 'NOT MEASURED — this project has no reported words';
+    assert(m.repeated.length === 0,
+        `${m.repeated.length} message(s) appear in both the header and the thread`);
+    return `${m.words.length} word(s) in the header, none of them repeated below`;
+});
+
+await check('P3-inj — the same-message test would notice a repeat', async () => {
+    /* Without this, P3 passing could mean "nothing is duplicated" or "the comparison never matched
+     * anything". Planting the header's own text into a thread row settles which. */
+    const href = await firstProjectWithWords();
+    if (!href) return 'NOT MEASURED — no project on this hub has any reported words';
+    await b.goto(href);
+    const caught = await b.evaluate(`(() => {
+        const norm = s => s.replace(/\\s+/g, ' ').trim();
+        const word = document.querySelector('.wordbody');
+        const row = document.querySelector('[data-measure="thread-item"] .thbody');
+        if (!word || !row) return { none: true };
+        row.textContent = word.textContent;
+        const words = [...document.querySelectorAll('.wordbody')].map(el => norm(el.textContent));
+        const thread = [...document.querySelectorAll('[data-measure="thread-item"] .thbody')]
+            .map(el => norm(el.textContent));
+        return { caught: words.filter(w => w.length > 20 && thread.includes(w)).length > 0 };
+    })()`);
+    if (caught.none) return 'NOT MEASURED — no word or no thread row to duplicate';
+    assert(caught.caught === true, 'a duplicated message was not detected, so P3 proves nothing');
+    return 'a message copied into the thread is caught by the test P3 applies';
+});
+
+await check('P4 — a slug nothing has ever mentioned is a 404, not an authoritative empty page',
+    async () => {
+        /*
+         * There is no projects table — a project is a slug something filed work under — so a mistyped URL
+         * would otherwise render a page stating with total confidence that nothing has ever run there. That
+         * is a lie the reader has no way to check, which is worse than an error.
+         */
+        /* `cc_session` — the name in lib/auth.ts. Signed in deliberately: a signed-OUT request renders the
+         * locked screen for every path, so it would answer 200 for a real project too and the check would
+         * pass while proving nothing. */
+        const res = await fetch(`${BASE}/p/definitely-not-a-real-project-xyz`, {
+            headers: { cookie: `cc_session=${process.env.CC_WEB_TOKEN}` },
+            redirect: 'manual',
+        });
+        assert(res.status === 404, `a made-up project answered ${res.status} rather than 404`);
+        return 'an unknown slug is a 404';
+    });
 
 /* ---------------------------------------------------------------------------------------- done */
 

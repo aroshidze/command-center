@@ -87,6 +87,22 @@ caused a specific failure, and each is enforced by a check that has been demonst
   rather than to now, and a run recovered from Claude Code's own transcript is hatched. A run too short to
   draw as a bar becomes a tick rather than a bar with a minimum width, because a bar that narrow would be
   claiming a length it does not have.
+- **Every project has its own page, and you can act from it.** `/p/<slug>` opens one project: what is
+  running now, **the last thing each agent actually said** with a time on it, which agents are waiting for
+  you, that project's open decisions and tasks *answerable there*, the whole conversation in one column —
+  your prompts, the agents' replies, the questions, the answers, what got finished — and a box to say
+  something back. Nothing on it is a field anybody maintains. Every line names who said it and when, which
+  is the only test a page like this can be held to.
+- **"Waiting for you" is a real list, not an inference.** Claude Code's `Notification` hook reports when the
+  harness is waiting on a human — a question, an idle prompt, a permission request — so the hub can tell you
+  *which* agent is blocked, on what, and for how long. Anthropic's own Agent View leads with the same column
+  and it is the right thing to lead with. The difference is that this one is not on your machine: it spans
+  every project on every machine that reports in, and it reads on a phone with the laptop shut.
+- **Runs are cut out of activity, because a session is not a unit of work.** A Claude Code conversation can
+  stay open for eleven days; drawn as one bar it tells you nothing, and waiting for it to end means the page
+  says *"nothing has looked at this since 8 August"* while an agent works. So the hooks report activity every
+  turn and the hub splits a conversation wherever it went quiet for an hour. Nothing waits on an event that
+  may never fire.
 - **It is not empty on the day you install it.** Hooks only know about sessions that start after they
   exist, so `cc backfill` reads Claude Code's own transcripts and posts the last fortnight. On the machine
   this was built on that is 271 stretches of work across eight projects, one command, no waiting.

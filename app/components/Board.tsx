@@ -2002,6 +2002,25 @@ function Group({ project, tasks, openId, onOpen, onDone, onFilter, onRefused, sk
                     {minutes ? ` · ${humanMinutes(minutes)}` : ''}
                 </span>
             </button>
+            {/*
+              * THE WAY THROUGH TO THE PROJECT'S OWN PAGE, and it is a separate control on purpose.
+              *
+              * The heading is a FILTER — it narrows this queue — and the project page is a NAVIGATION.
+              * Making one element do both would mean a press whose meaning depends on where in the element
+              * it landed, which is the shape of every control anybody has ever pressed by accident.
+              *
+              * OUTSIDE the button rather than inside it: an anchor nested in a button is invalid HTML and
+              * browsers resolve it by moving the anchor out, which produces a layout nobody wrote. It sits
+              * in the heading row by CSS instead.
+              */}
+            <a
+                className="popen"
+                href={`/p/${encodeURIComponent(project)}`}
+                data-measure="project-open"
+                title={`Open ${project} — what is running, what was said, what ran`}
+            >
+                Open
+            </a>
             {/* A list of tasks is a list. It was a stack of divs, so nothing announced "16 items". */}
             <ul
                 className="rows"

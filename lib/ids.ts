@@ -32,6 +32,14 @@ export const newApprovalId = () => `p${short()}`;
  * length is a convention shared with the rest rather than a constraint.
  */
 export const newSubagentId = () => `s${short()}`;
+/**
+ * One report — a turn's last words, a prompt, or the harness saying an agent is waiting.
+ *
+ * The only id here that is written at a rate rather than at an event: one per turn, per session. Eight
+ * characters is still ample — 36^8 against a table that would need to hold millions of rows before a
+ * collision became worth thinking about, and the primary key rejects one loudly if it ever happens.
+ */
+export const newReportId = () => `r${short()}`;
 
 /** Option keys and idempotency keys must be predictable and URL/callback safe. */
 export const KEY_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;

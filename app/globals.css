@@ -1612,12 +1612,29 @@
     .runsubtask { color: var(--dim); }
     .runsubwhen { color: var(--mute); }
 
+    /*
+     * THE KEY: ONE ROW OF SWATCHES, NOT A PARAGRAPH — and the fourth time this was asked for.
+     *
+     * What stood here was five sentences and about 130px, taller than the chart it explained, on a page
+     * its owner had already called text-heavy twice. `baseline` alignment because each item is a shape
+     * followed by two words and the words are what the eye scans along; `flex-wrap` because at 390px six
+     * items do not fit on one line and the alternative to wrapping is a horizontal scrollbar under a
+     * legend.
+     */
+    .runkeys {
+        list-style: none; margin: var(--sp-2) 0 0; padding: 0;
+        display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3);
+        font-size: var(--t-xs); color: var(--mute);
+    }
+    .runkeys li { display: flex; align-items: center; gap: var(--sp-1); }
+
     /* The legend's own swatches, drawn with the same rules as the things they explain rather than
        described in words that could drift from them. */
     .runkey {
         display: inline-block; width: 18px; height: 8px; vertical-align: middle;
         border-radius: var(--radius-xs);
         background-color: var(--s3);
+        flex: 0 0 auto;
     }
     .runkey.k-running {
         border-radius: var(--radius-xs) 0 0 var(--radius-xs);
@@ -1634,6 +1651,268 @@
             transparent 0 2px,
             color-mix(in oklab, var(--s1) 70%, transparent) 2px 4px);
         box-shadow: inset 0 0 0 1px var(--line-strong);
+    }
+    /*
+     * RAN AND FINISHED — the plain bar, stated rather than left as the absence of a modifier. It is the
+     * one item that is always present, and a key whose first entry is unstyled would read as a gap.
+     */
+    .runkey.k-measured { background-color: var(--s4); }
+    /*
+     * A MARK, NOT A NARROW BAR, at the same 2px the chart draws — the whole point of a swatch key is that
+     * the reader matches shape to shape instead of holding a sentence in their head, so a wide swatch
+     * standing in for a tick would defeat it.
+     */
+    .runkey.m-tick {
+        width: 2px; height: 12px; border-radius: 0;
+        background-color: var(--dim);
+    }
+    /* BEGAN BEFORE THE WINDOW: the left edge is a crop, so it is square there and rounded at the end it
+       actually has. The same asymmetry the bar itself uses. */
+    .runkey.m-clipped {
+        border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+        background-color: var(--s4);
+        mask-image: linear-gradient(to right, color-mix(in oklab, #000 55%, transparent) 0, #000 40%);
+    }
+
+    /* ============================================================================================
+     * ONE PROJECT — the page he asked for four times. app/p/[slug]/page.tsx.
+     *
+     * A NOTE ON COLOUR, BECAUSE THE FIRST VERSION OF THIS SECTION SILENTLY DREW NOTHING.
+     *
+     * It was written against `--warn`, which does not exist in this codebase. Every declaration that used it
+     * — the tint, the border, the inset edge, the pip — became invalid and fell back to transparent, so the
+     * loudest row on the page rendered as unstyled text and a screenshot at 1x looked plausible. Found by
+     * reading the COMPUTED style: `display` and `padding` had applied and `background-color` was
+     * `rgba(0,0,0,0)`, which is the signature of a bad token rather than a bad selector.
+     *
+     * The right token already existed. `--ask` is amber, it is one of the four a palette may never touch, and
+     * `lib/palettes.ts` says what it means in as many words: *"amber means a decision is waiting"*. An agent
+     * that cannot continue without him is that, exactly — so this reuses the vocabulary instead of adding a
+     * fifth status colour that would need its own contrast pair in six palettes and two schemes.
+     *
+     * THE VISUAL RULE THIS WHOLE SECTION IS BUILT ON, because it is the complaint he made four times:
+     * *"too text-heavy… it looks like a text-only website… we can visually show bars and what these bars
+     * mean and do it in a short, convenient, beautiful, intuitive way."*
+     *
+     * The first render of this page proved the point in the least flattering way possible — default
+     * bullets, no gaps, `claude-code5 min ago` run together, and a thread that read `youyou saidthe
+     * pricing helper`. Prose in a list is not a design. So every row here is a GRID with named columns,
+     * every kind carries a coloured edge that says what it is without a word, and nothing relies on the
+     * reader parsing a sentence to find out who is talking.
+     *
+     * WHY EDGES AND NOT ICONS. An icon set is a second vocabulary to learn and a dozen new shapes to
+     * keep legible in six palettes and two schemes. A 2px edge in a token that already means something
+     * elsewhere in the hub — `--ok` for finished, `--ask` for waiting, `--accent` for his own voice —
+     * costs nothing and is already contrast-checked.
+     * ========================================================================================== */
+
+    /*
+     * A NAME THAT IS ALSO A DOOR. Underlined only on hover, because a list of nineteen underlined slugs is
+     * a page of blue text — and the row already reads as one thing you can act on. The colour shift on hover
+     * is what says it is live; the `::after` box is what makes the target the whole name rather than its
+     * baseline.
+     */
+    .aslink { color: inherit; text-decoration: none; }
+    .aslink:hover { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+    .aslink:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+
+    /*
+     * "N waiting for you" in the summary line. `--ask` because that is what amber means throughout this
+     * interface, and it is the only thing in that line allowed to use it — the rest of the summary is a
+     * neutral statement of what is running and what is quiet.
+     */
+    .waitcount {
+        color: var(--ask); font-weight: var(--w-med);
+        /* The summary is a flex row with its own gap, so this needs no margin of its own — and a margin here
+           would be a nineteenth spacing value of exactly the kind the census removed. */
+    }
+    .summary .waitcount::before { content: '·'; color: var(--mute); margin-inline-end: var(--sp-2); }
+
+    /* Back to the list. Quiet, because it is chrome: the page's subject is directly below it. */
+    .crumb {
+        font-size: var(--t-sm); color: var(--mute); text-decoration: none;
+        display: inline-flex; align-items: center; gap: 4px;
+    }
+    .crumb:hover { color: var(--text); }
+
+    /* The project's own name, in its own hue, at the top of its own page. `.phead` is the board's group
+       heading and is reused deliberately — a project is identifiable across both pages by the same tint
+       and the same dot rather than by two treatments that drifted apart. */
+    .phead h1 { margin: 0; font-size: var(--t-xl); }
+    .pdot.big { width: 10px; height: 10px; }
+
+    /*
+     * WAITING FOR A PERSON. The loudest row on the page, and the only one that gets to be.
+     *
+     * `--ask` rather than `--bad`: nothing is broken. An agent is standing still, which is a call for
+     * attention and not a report of failure — and spending the error colour on it would leave nothing
+     * louder for the case where something actually went wrong. Amber already means "a decision is
+     * waiting" throughout this interface, and `--ask-bg` / `--ask-line` are the surfaces that go with it,
+     * so this row is the same visual statement the ask card makes rather than a new one.
+     */
+    .waitlist { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: grid; gap: var(--sp-1); }
+    .waitrow {
+        display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: var(--sp-2);
+        padding: var(--sp-2);
+        background: var(--ask-bg);
+        border: 1px solid var(--ask-line);
+        border-radius: var(--radius);
+        box-shadow: var(--edge), inset 2px 0 0 0 var(--ask);
+    }
+    .waitpip {
+        width: 8px; height: 8px; border-radius: var(--radius-pill);
+        background: var(--ask); margin-top: 5px;
+    }
+    .waitwhat { display: flex; flex-direction: column; gap: 2px; font-size: var(--t-md); }
+    .waitsay { color: var(--dim); font-size: var(--t-sm); }
+    .waitwhere { color: var(--mute); font-size: var(--t-xs); white-space: nowrap; }
+
+    /*
+     * THE LATEST WORD — the richest thing on the page, and the one that had no channel until agents
+     * started reporting what they said.
+     *
+     * A quote gets room: the attribution is a line of its own above the body rather than a prefix in
+     * front of it, because a name and a time crammed onto the front of three sentences is what produced
+     * `claude-code5 min ago` in the first render. `pre-wrap` keeps the line breaks the assistant wrote —
+     * a short list reflowed into a paragraph is less readable than the terminal it came from.
+     */
+    .lastwords { margin-top: var(--sp-4); }
+    .wordlist { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: grid; gap: var(--sp-2); }
+    .wordrow {
+        display: grid; grid-template-columns: 1fr auto; gap: 2px var(--sp-2);
+        padding: var(--sp-2) var(--sp-3);
+        background: var(--s1); border: 1px solid var(--line); border-radius: var(--radius);
+        box-shadow: var(--edge), inset 2px 0 0 0 var(--proj, transparent);
+    }
+    .wordwho { font-size: var(--t-xs); font-weight: var(--w-med); color: var(--dim);
+               letter-spacing: var(--track-caps); text-transform: uppercase; }
+    .wordwhen { font-size: var(--t-xs); color: var(--mute); font-family: var(--mono);
+                white-space: nowrap; text-align: right; }
+    .wordbody {
+        grid-column: 1 / -1; margin: 2px 0 0; color: var(--text); font-size: var(--t-md);
+        white-space: pre-wrap; line-height: var(--lh-body);
+    }
+
+    /* WHAT NEEDS HIM. No chips and no counts — see Attention.tsx for why that is a rule rather than an
+       omission. The gap is the whole styling: the cards inside are the queue's own. */
+    .attention { margin-top: var(--sp-4); }
+    .attention .tasklist { margin-top: var(--sp-2); }
+
+    /* ============================================================================================
+     * THE CONVERSATION. One column, newest first, and the composer above it.
+     * ========================================================================================== */
+    .thread { margin-top: var(--sp-4); }
+    .threadhead { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
+    .threadhead h2 { margin: 0; }
+
+    .thcompose {
+        margin-top: var(--sp-2); padding: var(--sp-2);
+        background: var(--s1); border: 1px solid var(--line); border-radius: var(--radius);
+        box-shadow: var(--edge);
+    }
+    .thinput {
+        width: 100%; resize: vertical; min-height: 52px;
+        font: inherit; color: var(--text);
+        background: var(--s0); border: 1px solid var(--line); border-radius: var(--radius-sm);
+        padding: var(--sp-2);
+    }
+    .thinput:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+    .thcomposefoot {
+        display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap;
+        margin-top: var(--sp-2);
+    }
+    /* The button is sized by its text here, unlike the board's full-width primary: it sits beside the
+       hint that explains what it does, and a button spanning the pane would put that hint on a line of
+       its own for no gain. */
+    .thcomposefoot .primary { width: auto; min-width: 0; }
+    .thhint { color: var(--mute); font-size: var(--t-xs); flex: 1 1 12ch; }
+
+    /*
+     * ONE ITEM. THREE COLUMNS: who, what, when.
+     *
+     * The middle column holds a label and a body, and the label is what removes the sentence the first
+     * render needed. `who` is a fixed track so every name starts at the same x — a ragged first column is
+     * the thing that makes a list of forty items unscannable, and it is the one property a flex row
+     * cannot give.
+     */
+    .thlist { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: grid; gap: 1px; }
+    /*
+     * FOUR COLUMNS ON ONE BASELINE, and the fourth one is the fix for a real measurement.
+     *
+     * The first version stacked the verb above the body inside the middle column, which made every item at
+     * least two lines tall — 40 items became a 1,300px scroll for content that is mostly one sentence, and
+     * a column of uppercase labels down the middle competing with the words. Giving the verb its own narrow
+     * track puts who, what and when on one line and lets the body wrap under itself when it is long.
+     *
+     * `10ch` for the verb because the longest is "waiting for you" and it is allowed to wrap to two lines
+     * in that one case rather than widening the track for every other row.
+     */
+    .thitem {
+        display: grid; grid-template-columns: 11ch 10ch 1fr auto; align-items: baseline;
+        gap: var(--sp-2); padding: var(--sp-1) var(--sp-2);
+        border-left: 2px solid var(--line);
+        background: var(--s1);
+        font-size: var(--t-sm);
+    }
+    /* Zebra-free, but the newest item is on top of a stack of forty and deserves an edge that says the
+       list has a beginning. */
+    .thitem:first-child { border-top-left-radius: var(--radius-sm); border-top-right-radius: var(--radius-sm); }
+    .thitem:last-child { border-bottom-left-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
+    .thwho {
+        font-family: var(--mono); font-size: var(--t-xs); color: var(--mute);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .thlabel {
+        font-size: var(--t-xs); color: var(--mute);
+        letter-spacing: var(--track-caps); text-transform: uppercase;
+    }
+    /* `pre-wrap` for the same reason as `.wordbody`, and `overflow-wrap` because a pasted path with no
+       spaces in it would otherwise push the `when` column off the row. */
+    .thbody { color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; line-height: var(--lh-body); }
+    .thmeta { color: var(--mute); font-size: var(--t-xs); }
+    .thwhen {
+        font-family: var(--mono); font-size: var(--t-xs); color: var(--mute); white-space: nowrap;
+    }
+
+    /*
+     * THE KIND, ENCODED IN THE EDGE. Six kinds, three colours, and the choice of which share is the
+     * argument: WHO IS TALKING is what the eye needs first when skimming a conversation, so his own
+     * voice (a note, an answer, a prompt) is one colour, the agents' another, and the two states that
+     * are neither — waiting, finished — get the tokens that already mean those things everywhere else:
+     * `--ask` for a decision waiting on a human, `--ok` for done.
+     */
+    .thitem.th-told, .thitem.th-note, .thitem.th-answered { border-left-color: var(--accent); }
+    .thitem.th-said, .thitem.th-asked { border-left-color: color-mix(in oklab, var(--proj, var(--dim)) 70%, var(--line)); }
+    .thitem.th-waiting {
+        border-left-color: var(--ask);
+        background: color-mix(in oklab, var(--ask-bg) 60%, var(--s1));
+    }
+    .thitem.th-finished { border-left-color: var(--ok); }
+    .thitem.th-finished .thbody { color: var(--dim); }
+
+    /*
+     * ON A PHONE THE COLUMNS BECOME TWO ROWS, and this is a measured fix rather than a precaution.
+     *
+     * Rendered at 390px, `11ch 10ch 1fr auto` left the body about fourteen characters wide: *"Found it.
+     * `costOf` counts a 1h cache write at the 5m rate"* came out as eleven lines in a gutter, with two
+     * thirds of the row spent on a name and a verb. Fixed tracks are right where there is width to spend
+     * and wrong where there is not.
+     *
+     * So under 560px — the breakpoint the queue already uses for the same kind of collapse — who, verb and
+     * time share the first line and the body gets the full width of the second. `560px` and not a new number
+     * because a fifth breakpoint is a fifth thing to check in every future layout pass.
+     */
+    @media (max-width: 560px) {
+        .thitem {
+            grid-template-columns: auto auto 1fr;
+            row-gap: 2px;
+        }
+        .thbody { grid-column: 1 / -1; }
+        /* The time moves to the end of the FIRST line, which is where it reads as a stamp on the row rather
+           than as a trailing fragment of the message. */
+        .thwhen { grid-column: 3; grid-row: 1; text-align: right; }
+        .waitrow { grid-template-columns: auto 1fr; }
+        .waitwhere { grid-column: 2; color: var(--mute); }
     }
 
     .preslist { list-style: none; margin: var(--sp-2) 0 0; padding: 0; }
@@ -2192,8 +2471,53 @@
         padding: var(--sp-1) var(--sp-2) var(--sp-2);
         box-shadow: var(--edge), inset 3px 0 0 0 var(--proj, transparent);
     }
+    /*
+     * `position: relative` for ONE reason: the "Open" link that reaches this project's own page sits at the
+     * right-hand end of the heading row, and the heading is a BUTTON that spans the row.
+     *
+     * The two are deliberately separate controls. Pressing the heading FILTERS this queue; pressing Open
+     * NAVIGATES. One element doing both would be a press whose meaning depended on where inside it your
+     * thumb landed. And the anchor cannot be nested inside the button — that is invalid HTML and the browser
+     * fixes it by moving the anchor out, producing a layout nobody wrote — so it is a sibling, placed.
+     */
+    .pgroup { position: relative; }
+    .popen {
+        position: absolute; top: var(--sp-1); right: var(--sp-2);
+        font-size: var(--t-xs); color: var(--mute); text-decoration: none;
+        /* 2px and `--sp-1`. L10 rejected the 6px this started as: the horizontal padding of a small control
+           is a space the page paints, and there is one scale for those. */
+        padding: 2px var(--sp-1); border-radius: var(--radius-xs);
+        /* Above the heading button, or the button's own hit area would swallow the press. */
+        z-index: 1;
+    }
+    .popen:hover { color: var(--text); background: var(--s2); }
+    .popen:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+    /*
+     * THE ROOM FOR `.popen` IS TAKEN ON `.pmeta`, NOT AS PADDING ON `.phead` — and that is the second time
+     * this file has been bitten by the same rule.
+     *
+     * `@layer desktop` contains a bare `button { padding: 4px 12px }`, and a later layer beats an earlier one
+     * whatever the specificity, so `.phead { padding: 4px 52px 4px 4px }` in `@layer components` measured as
+     * `4px 12px` and the task count ran straight under the link. The same trap is documented forty lines
+     * above about `.crestbtn`. Nothing else declares a `margin-right` on `.pmeta`, so this one holds: layer
+     * order only decides contests over the SAME property.
+     *
+     * `--sp-6`, AND THE ARITHMETIC IS WHY IT IS ENOUGH — 44px was my first measurement and 40px was my first
+     * correction, and L10 rejected both, because *"every space the page paints is on the one spacing scale"*
+     * means the scale rather than a value near it. A measurement tells you how much room is needed; the scale
+     * is what you are allowed to spend.
+     *
+     * The link's left edge sits 46px inside the group (8px inset plus its own 38px). `.pmeta` already ends 20px
+     * inside it — `.phead`'s 12px of padding plus `.pgroup`'s 8px — so 32px of margin puts it 52px in, which
+     * clears the link by 6px. Nothing here is a guess; the two paddings are the reason 32 works and 24 would
+     * not.
+     */
+    .pgroup .pmeta { margin-right: var(--sp-6); }
+
     .phead {
-        display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px; width: 100%;
+        display: flex; align-items: center; gap: 8px; width: 100%;
+        padding: 4px 4px 4px;
         border: 0; border-bottom: 1px solid var(--line); border-radius: 0; margin-bottom: 2px;
         min-height: 0; text-align: left; color: inherit;
         background-color: var(--s1);

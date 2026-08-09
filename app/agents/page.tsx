@@ -8,9 +8,11 @@ import { deriveWholeRecord, marks as marksOf, standing as standingOf } from '../
 import {
     foldAgents, foldProjects, LIVE_MINUTES, sentenceFor, summaryLine,
 } from '../../lib/presence';
+import { firstLine, waitingRuns } from '../../lib/reports';
 import { costOf, humanDollars } from '../../lib/prices';
+import { projectColor } from '../../lib/colour';
 import { agentsView, board, SPEND_ELSEWHERE } from '../../lib/store';
-import { humanAgo, humanCount } from '../../lib/format';
+import { humanAgo, humanCount, humanSpan } from '../../lib/format';
 import { buildTimeline } from '../../lib/timeline';
 import Nav from '../components/Nav';
 import Presence from '../components/Presence';
@@ -150,6 +152,12 @@ export default async function AgentsPage() {
      * check can load it and assert the arithmetic without a browser.
      */
     const runs = buildTimeline(view.sessions, view.subagents, now);
+    /*
+     * WHO IS WAITING, across every project. Folded from the newest report per conversation, so a run that
+     * asked at midnight and has heard nothing since is still on this list at nine — and one he has since
+     * replied to is not, because his reply is a newer row. Nothing has to be cleared.
+     */
+    const waiting = waitingRuns(view.reports);
     const sentences = Object.fromEntries(
         projectPresence.map(p => [p.project, sentenceFor(p, now)]),
     );
@@ -228,6 +236,20 @@ export default async function AgentsPage() {
                                     {projectPresence.length === 1 ? '' : 's'}
                                 </span>
                             )}
+                        {/*
+                          * AND HOW MANY ARE WAITING FOR HIM, in the one line at the top of the page.
+                          *
+                          * It goes here rather than only in the section below, because the summary is where
+                          * the eye lands and this is the only figure on the page that a human action follows
+                          * from. It is not a chip and it is not on the queue: `docs/BRIEF-NOTHING-BLOCKED.md`
+                          * §2 forbids inflating the queue's counts, and this counts RUNS whose newest report
+                          * says the harness is waiting — a different set from anything the queue totals.
+                          */}
+                        {waiting.length > 0 && (
+                            <span className="waitcount" data-measure="waiting-count">
+                                {waiting.length} waiting for you
+                            </span>
+                        )}
                     </div>
                 </header>
 
@@ -292,6 +314,66 @@ export default async function AgentsPage() {
                           * Rendered only when something ran: a chart of nothing is the 660px-void empty
                           * state §XXVIII removed from the palette, redrawn larger.
                           */}
+                        {/*
+                          * ==================================================================
+                          * WHO IS WAITING FOR HIM — above the chart, above everything.
+                          * ==================================================================
+                          *
+                          * Anthropic shipped Agent View in May 2026: a roster of every running
+                          * session in the terminal, and the column it leads with is *needs your
+                          * input*. That is the right judgement and it is worth taking wholesale —
+                          * of everything a command centre can say, "this one cannot continue
+                          * without you" is the only line about the next thirty seconds.
+                          *
+                          * WHAT THIS HUB CAN DO THAT AGENT VIEW STRUCTURALLY CANNOT: it is not on
+                          * his machine. Agent View is a terminal on one computer looking at one
+                          * checkout; this list spans every project on every machine that reports
+                          * in, and it is readable from a phone with the laptop shut. That is the
+                          * whole claim of this product, and it is this list that makes it.
+                          *
+                          * `waiting` is not a self-assessment. It is `Notification` with a type of
+                          * `agent_needs_input`, `idle_prompt` or `permission_prompt` — the HARNESS
+                          * reporting that its agent is blocked. See lib/reports.ts for why that
+                          * distinction is what makes this admissible where a `status` field is not.
+                          */}
+                        {waiting.length > 0 && (
+                            <section className="waiting" data-measure="waiting">
+                                <h2>Waiting for you</h2>
+                                <ul className="waitlist" data-measure="waiting-list">
+                                    {waiting.map(w => (
+                                        <li key={`${w.project}-${w.session}`} className="waitrow"
+                                            data-measure="waiting-row" data-project={w.project}
+                                            style={{ ['--proj' as string]: projectColor(w.project) }}>
+                                            <span className="waitpip" aria-hidden="true" />
+                                            <span className="waitwhat">
+                                                <span>
+                                                    <b>{w.agent}</b> has been waiting{' '}
+                                                    {humanSpan(Math.max(0, Math.round(
+                                                        (now - new Date(w.since).getTime()) / 60_000)))}
+                                                    {' '}in{' '}
+                                                    <a className="aslink" href={`/p/${encodeURIComponent(w.project)}`}>
+                                                        {w.project}
+                                                    </a>
+                                                </span>
+                                                {w.body && (
+                                                    <span className="waitsay">{firstLine(w.body, 140)}</span>
+                                                )}
+                                            </span>
+                                            {/*
+                                              * SAID PLAINLY, because the hub cannot answer this one. A held
+                                              * PERMISSION request is answerable here — that is what the
+                                              * approvals relay is for — but an ordinary "waiting for input"
+                                              * lives in a terminal this server cannot reach. A row that
+                                              * looked answerable and was not would be worse than a row that
+                                              * says where to go.
+                                              */}
+                                            <span className="waitwhere">in the terminal</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </section>
+                        )}
+
                         {runs.total > 0 && <Runs view={runs} now={now} />}
 
                         <Presence
@@ -312,11 +394,24 @@ export default async function AgentsPage() {
                           * INSIDE the branch, so it can never appear over an empty list. A caveat about
                           * something that is not on screen is worse than no caveat.
                           */}
+                        {/*
+                          * THIS PARAGRAPH WENT OUT OF DATE THE MOMENT THE REPORT HOOKS SHIPPED, and it is
+                          * worth recording why that matters more than the wording.
+                          *
+                          * It used to say *"sessions report at their start and end, and a sync counts too, so
+                          * a long build with nothing in between can read as quiet for a while."* That was an
+                          * honest caveat about a real limitation — and it became false, because `Stop` now
+                          * reports every turn. A caveat nobody removed is a page describing a version of
+                          * itself that no longer exists, which is exactly the class of untruth this whole
+                          * surface is built to avoid. It is now the one thing that IS still conditional: the
+                          * per-turn reporting only exists where somebody opted in.
+                          */}
                         <p className="why presnote" data-measure="presence-caveat">
                             A project counts as being worked on if anything reported in within the last{' '}
-                            {LIVE_MINUTES} minutes. Sessions report at their start and end, and a sync counts
-                            too, so a long build with nothing in between can read as quiet for a while. Nothing
-                            here is stored — it is all recomputed from what agents have reported.
+                            {LIVE_MINUTES} minutes. Where <code>cc presence on</code> has run, that is every
+                            turn an agent takes; everywhere else it is the start and end of a session plus
+                            whenever an agent syncs, so a long stretch of quiet work can read as quiet.
+                            Nothing here is stored — it is all recomputed from what agents have reported.
                         </p>
                     </>
                 )}

@@ -266,6 +266,50 @@ export const SCHEMA_STATEMENTS: string[] = [
     `alter table subagents add column if not exists observed boolean not null default true`,
 
     /* ------------------------------------------------------------------------------------------
+     * REPORTS — WHAT WAS SAID, BY WHOM, AND WHEN. The table that makes the hub a control centre
+     * rather than a status board.
+     *
+     * WHY THIS DOES NOT BREAK THE RULE THAT BANNED IT. `lib/presence.ts` says, and still says, that
+     * there is no field an agent fills in about its own state: *"an agent asked to self-report health
+     * reports green, and a single green-while-you-slept status poisons every other indicator on the
+     * page."* That refusal is intact. Every row here is a QUOTE with a time on it, not an assessment:
+     *
+     *   said     the last thing the assistant actually said, handed over by the `Stop` hook in
+     *            `last_assistant_message`. The harness's own record of a turn's final words.
+     *   told     what he typed, from `UserPromptSubmit`. His half of the conversation.
+     *   waiting  the harness said the agent is waiting for a human — `Notification` with a type of
+     *            `agent_needs_input`, `idle_prompt` or `permission_prompt`. Reported BY THE HARNESS
+     *            about the agent, which is why it is admissible where a self-declared "blocked" is not.
+     *
+     * The test from AGENTS.md is "can it name who said it and when?", and every row here answers with
+     * `agent`, `session` and `at`. Nothing in this table is a current-state field that something has to
+     * keep true: a row is true forever, because it is a record of a moment.
+     *
+     * APPEND-ONLY, AND READ WITH A BOUND. One `said` row per turn is a few hundred rows a day at his
+     * volume. Nothing reads this table without a `limit` and a time window — §XXVI was a whole session
+     * spent on a payload cliff caused by less.
+     *
+     * NO SECRETS, enforced rather than promised: `recordReport` redacts token-shaped words before the
+     * insert, because `last_assistant_message` is text nobody wrote for this database.
+     * ---------------------------------------------------------------------------------------- */
+    `create table if not exists reports (
+        id       text primary key,
+        project  text not null,
+        agent    text not null,
+        /* The CONVERSATION's id as the harness reports it, never a run id. The hub splits a long
+           conversation into runs at gaps in its activity, and those boundaries are drawn here rather
+           than known out there; joining a report to a run is a question of which run was going at the
+           time. See baseSession() in lib/timeline.ts. */
+        session  text not null,
+        kind     text not null check (kind in ('said', 'told', 'waiting')),
+        body     text,
+        at       timestamptz not null default now()
+    )`,
+    /* The two reads that exist: the newest per project, and one project's thread. Both are covered. */
+    `create index if not exists reports_project_idx on reports (project, at desc)`,
+    `create index if not exists reports_session_idx on reports (project, session, at desc)`,
+
+    /* ------------------------------------------------------------------------------------------
      * SPEND — TOKENS, never money. The money is a fold over these numbers and a price table that
      * lives in lib/prices.ts, so a wrong price is fixed by deploying rather than by migrating.
      * ---------------------------------------------------------------------------------------- */
@@ -297,7 +341,7 @@ export const CORE_TABLES: string[] = ['agents', 'events', 'notes', 'questions', 
 
 /** Every table this schema creates, core plus the rest. */
 export const ALL_TABLES: string[] = [
-    ...CORE_TABLES, 'settings', 'presence', 'approvals', 'subagents', 'spend',
+    ...CORE_TABLES, 'settings', 'presence', 'approvals', 'subagents', 'spend', 'reports',
 ];
 
 /**

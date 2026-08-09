@@ -296,6 +296,51 @@ create index if not exists subagents_session_idx on subagents (project, session,
 -- The same bit, for the same reason. See the note on presence.observed above.
 alter table subagents add column if not exists observed boolean not null default true;
 
+-- REPORTS: WHAT WAS SAID, BY WHOM, AND WHEN. The table that makes this a command centre rather than a
+-- status board — and the one that had to be argued for hardest, because the rule directly above it
+-- refuses exactly the thing it looks like.
+--
+-- WHAT IS STILL REFUSED, unchanged: a field an agent fills in about its own state. No `doing`, no
+-- `status`, no `progress`. An agent asked to self-report health reports green, and a single
+-- green-while-you-slept status poisons every other indicator on the page.
+--
+-- WHY THESE ROWS ARE NOT THAT. Two properties, and both are needed:
+--
+--   1. NOTHING HERE IS AUTHORED BY THE AGENT ABOUT ITSELF. `said` is the harness's own
+--      `last_assistant_message` from the Stop hook — the actual words a turn ended with. `told` is the
+--      prompt the human typed. `waiting` is Claude Code's Notification event reporting that IT is
+--      waiting for a person. An agent cannot flatter itself through any of the three, because none of
+--      them asks it a question.
+--   2. NOTHING HERE IS A CLAIM ABOUT NOW. A row says "at 14:32 this was said", which is true forever
+--      and needs nothing to keep it true. A status column is a claim about the present that something
+--      has to maintain, and the thing that maintains it is always the thing that stops firing.
+--
+-- The test, from AGENTS.md: **can it name who said it and when?** Every row here answers with `agent`,
+-- `session` and `at`.
+--
+-- `session` IS THE CONVERSATION, NEVER A RUN. The hub splits a long-lived conversation into runs at gaps
+-- in its activity, and those boundaries are drawn here rather than known out there — so a report is
+-- joined to a run by asking which run was going at the time. See baseSession() in lib/timeline.ts.
+--
+-- THE ONLY TABLE THAT GROWS AT A RATE rather than at an event: one `said` row per turn. Nothing reads it
+-- without a time window and a LIMIT, and the body is capped at 400 characters on the way in.
+--
+-- NO SECRETS, enforced rather than promised. `last_assistant_message` is prose nobody wrote for a
+-- database, so token-shaped words are replaced with `(redacted)` before the insert. This is the one path
+-- in the hub that redacts instead of refusing, because nobody can rewrite something already said.
+create table if not exists reports (
+    id       text primary key,
+    project  text not null,
+    agent    text not null,
+    session  text not null,
+    kind     text not null check (kind in ('said', 'told', 'waiting')),
+    body     text,
+    at       timestamptz not null default now()
+);
+-- The two reads that exist: the newest per project, and one project's thread. Both are covered.
+create index if not exists reports_project_idx on reports (project, at desc);
+create index if not exists reports_session_idx on reports (project, session, at desc);
+
 -- SPEND: TOKENS, and never money.
 --
 -- This is the one figure in the hub that comes from outside it, so unlike every other number here it

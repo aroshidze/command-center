@@ -295,25 +295,61 @@ export default function Runs({ view, now }: { view: TimelineView; now: number })
                       </p>}
             </div>
 
-            <p className="why presnote" data-measure="run-legend">
-                A bar is a run that was watched from start to finish.{' '}
-                <span className="runkey k-running" aria-hidden="true" /> no right-hand edge means it is
-                still going.{' '}
-                <span className="runkey k-unterminated" aria-hidden="true" /> a broken edge means it
-                started and nothing ever closed it, so it is drawn to the last thing seen rather than to
-                now.{' '}
-                {view.anyReconstructed && (
-                    <>
-                        <span className="runkey k-reconstructed" aria-hidden="true" /> a hatched bar was
-                        read back from Claude Code&rsquo;s own transcript rather than reported by a hook,
-                        so its edges are where the messages stop rather than where anything said the
-                        session did.{' '}
-                    </>
+            {/*
+             * A KEY OF SWATCHES, NOT A PARAGRAPH — and this is the third time it has been asked for.
+             *
+             * What stood here was five sentences and about 130px, taller than the chart it explained, in a
+             * page the owner had already called "too text-heavy" twice. The comment at the top of this file
+             * even names the failure: *"hollow-versus-filled is the plainest available way to say 'inferred'
+             * without a legend nobody reads. There is a legend anyway."* The reasoning was right and the
+             * prose shipped regardless.
+             *
+             * His words, and they are the specification: *"we can visually show bars and what these bars mean
+             * and do it in a short, convenient, beautiful, intuitive way… This is not very user-friendly and
+             * not very human-friendly. Maybe it's AI-friendly."*
+             *
+             * So: one row, one swatch per state, two or three words each. The swatch IS the explanation — it
+             * is the same element the chart draws, at the same size, so the reader matches shape to shape
+             * rather than holding a sentence in their head and going back to look. Items appear only when the
+             * chart actually contains that state, so the key is as short as the picture is simple: a day with
+             * no reconstructed runs has no word about hatching in it.
+             *
+             * The long-form reasoning did not vanish, it moved to where reasoning belongs — the header of this
+             * file. A reader who wants to know why an inferred span is hatched can read the code; a reader
+             * looking at a chart wants to know which one is which.
+             */}
+            {/*
+              * THE CLASS NAMES ARE THE CONTRACT, and check R3 in `prove:use` is what enforces it.
+              *
+              * `k-<kind>` mirrors a block's `data-kind` exactly, so the check can assert that every kind the
+              * chart draws has a swatch and that no swatch explains a kind nothing is drawing. That check
+              * exists because a real defect shipped: `observed` went missing from one SELECT, 269
+              * reconstructed spans were drawn as measurements, and the ONLY visible symptom was this key
+              * quietly losing its hatched entry.
+              *
+              * `m-<modifier>` is the second half of the same idea for the two things that are NOT kinds — a
+              * span too narrow to be a bar, and one that began before the window. The first version of this
+              * key called them `k-mark` and `k-clipped`, R3 correctly reported that the chart draws no such
+              * kinds, and the fix was to name them for what they are rather than to loosen the check.
+              */}
+            <ul className="runkeys" data-measure="run-legend">
+                <li><span className="runkey k-measured" aria-hidden="true" /> ran and finished</li>
+                {view.anyRunning && (
+                    <li><span className="runkey k-running" aria-hidden="true" /> still going</li>
                 )}
-                A run shorter than about four minutes is drawn as a mark rather than a bar, because a bar
-                that narrow would be claiming a length it does not have.
-                {view.anyClipped && ' A bar with no left edge began before this window.'}
-            </p>
+                {view.anyUnterminated && (
+                    <li><span className="runkey k-unterminated" aria-hidden="true" /> never closed</li>
+                )}
+                {view.anyReconstructed && (
+                    <li><span className="runkey k-reconstructed" aria-hidden="true" /> read from the transcript</li>
+                )}
+                {view.anyMark && (
+                    <li><span className="runkey m-tick" aria-hidden="true" /> too short to draw</li>
+                )}
+                {view.anyClipped && (
+                    <li><span className="runkey m-clipped" aria-hidden="true" /> began earlier</li>
+                )}
+            </ul>
         </section>
     );
 }

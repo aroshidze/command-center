@@ -33,6 +33,7 @@
  * No browser, no database, no dev server. Runs in a few seconds.
  */
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -319,6 +320,159 @@ await check('a heartbeat that cannot identify itself sends nothing', async () =>
     await hub.close();
     if (hub.seen.posts.length) throw new Error('posted a heartbeat with no session id');
     return 'no session id, no request';
+});
+
+/* ------------------------------------------------------------------------------------------- the reports
+ *
+ * WHAT THESE ARE FOR. `cc report` is the hook that made the hub a command centre rather than a status
+ * board, and it reads three fields the harness hands over — `last_assistant_message` on `Stop`, `prompt` on
+ * `UserPromptSubmit`, `message` plus `notification_type` on `Notification`. Every one of those is a name
+ * that could be wrong, and the failure mode of a wrong name is SILENT: a report posted with a null body
+ * looks exactly like a turn that ended without saying anything.
+ *
+ * So each field is asserted by name against the documented payload, and the two refusals — a notification
+ * that is not about a human, and `--quiet` — are asserted too, because both are promises made to somebody
+ * setting this up on a machine that is not theirs.
+ */
+
+await check('the run gap is LARGER than the live window, which is the load-bearing relationship',
+    async () => {
+        /*
+         * NOT A CHECK ON EITHER NUMBER — a check on the relationship between them, because the numbers are
+         * both tunable and the relationship is not.
+         *
+         * Cutting a run at a gap sets its `ended_at`. A closed run whose end falls inside the live window
+         * renders as *"it ran and stopped"*. So if the gap were shorter than the window there would be a
+         * stretch of minutes in which an agent that is working reads as finished — the exact class of untruth
+         * this whole feature was built to remove, reintroduced by somebody reasonably deciding that thirty
+         * minutes felt tidier.
+         *
+         * READ OUT OF THE SOURCE, and not imported, because `lib/presence.ts` CANNOT be imported by a check:
+         * it takes `humanSpan` as a value from `lib/format.ts`, which breaks Node's type-stripping, and its
+         * own header calls that the deliberate trade. `lib/reports.ts` is importable and is imported for
+         * exactly that contrast — the two halves of the same relationship, read the two ways available.
+         *
+         * A regex over source is a weaker instrument than an import and it is the strongest one there is
+         * here. It still fails if somebody edits either number, which is the whole job.
+         */
+        const { RUN_GAP_MINUTES } = await import('../lib/reports.ts');
+        const src = readFileSync(join(root, 'lib', 'presence.ts'), 'utf8');
+        const found = /export const LIVE_MINUTES\s*=\s*(\d+)/.exec(src);
+        if (!found) {
+            throw new Error('LIVE_MINUTES is no longer declared in lib/presence.ts in a form this can read');
+        }
+        const LIVE_MINUTES = Number(found[1]);
+        if (!(RUN_GAP_MINUTES > LIVE_MINUTES)) {
+            throw new Error(
+                `RUN_GAP_MINUTES is ${RUN_GAP_MINUTES} and LIVE_MINUTES is ${LIVE_MINUTES}. A gap no larger `
+                + 'than the live window means a run closed by a gap is reported as "ran and stopped" while '
+                + 'the agent is still working.',
+            );
+        }
+        return `gap ${RUN_GAP_MINUTES} min > live window ${LIVE_MINUTES} min`;
+    });
+
+await check('Stop posts the last thing the assistant SAID, by that field name', async () => {
+    const hub = await stubHub();
+    await runCc(['report', '--said'], {
+        stdin: JSON.stringify({
+            session_id: 'sess-r1', cwd: root, hook_event_name: 'Stop',
+            last_assistant_message: 'Rate table fixed. Next: the two call sites.',
+        }),
+        url: hub.url,
+    });
+    await hub.close();
+    const body = hub.seen.bodies[0];
+    eq(body.kind, 'said', 'the kind');
+    eq(body.session, 'sess-r1', 'the session id');
+    eq(body.body, 'Rate table fixed. Next: the two call sites.', 'the message');
+    if (!body.branch) throw new Error('no branch was read off a real git checkout');
+    return `said: ${JSON.stringify(body.body.slice(0, 30))}, branch ${body.branch}`;
+});
+
+await check('UserPromptSubmit posts what he TYPED, from the prompt field', async () => {
+    const hub = await stubHub();
+    await runCc(['report', '--told'], {
+        stdin: JSON.stringify({
+            session_id: 'sess-r1', cwd: root, hook_event_name: 'UserPromptSubmit',
+            prompt: 'make the two call sites agree',
+        }),
+        url: hub.url,
+    });
+    await hub.close();
+    eq(hub.seen.bodies[0].kind, 'told', 'the kind');
+    eq(hub.seen.bodies[0].body, 'make the two call sites agree', 'the prompt');
+    return 'told, with the prompt carried through';
+});
+
+await check('a Notification that means A HUMAN IS NEEDED is reported', async () => {
+    const hub = await stubHub();
+    await runCc(['report', '--waiting'], {
+        stdin: JSON.stringify({
+            session_id: 'sess-r1', cwd: root, hook_event_name: 'Notification',
+            notification_type: 'agent_needs_input', message: 'Claude is waiting for your input',
+        }),
+        url: hub.url,
+    });
+    await hub.close();
+    eq(hub.seen.bodies[0].kind, 'waiting', 'the kind');
+    eq(hub.seen.bodies[0].body, 'Claude is waiting for your input', 'the message');
+    return 'waiting, with the harness message carried through';
+});
+
+await check('a Notification about ANYTHING ELSE is not reported at all', async () => {
+    /*
+     * The `matcher` in the settings file is the first lock and this is the second, which is the same
+     * belt-and-braces `cc subagent` uses on the tool name. `auth_success` fires on every sign-in and is not
+     * about him; a row for it would be a line on his project page that no action follows from.
+     */
+    const hub = await stubHub();
+    await runCc(['report', '--waiting'], {
+        stdin: JSON.stringify({
+            session_id: 'sess-r1', cwd: root, hook_event_name: 'Notification',
+            notification_type: 'auth_success', message: 'Signed in',
+        }),
+        url: hub.url,
+    });
+    await hub.close();
+    if (hub.seen.posts.length) throw new Error('posted a report for auth_success');
+    return 'auth_success, no request';
+});
+
+await check('--quiet sends the activity and NOT the words', async () => {
+    /*
+     * The promise behind `cc presence on --no-words`, and it has to be a check rather than a comment: it is
+     * the answer to "this tool uploads everything you type", and an answer that quietly stopped being true
+     * would be worse than never having offered it.
+     */
+    const hub = await stubHub();
+    await runCc(['report', '--said', '--quiet'], {
+        stdin: JSON.stringify({
+            session_id: 'sess-r1', cwd: root, last_assistant_message: 'something private',
+        }),
+        url: hub.url,
+    });
+    await hub.close();
+    const body = hub.seen.bodies[0];
+    if (!body) throw new Error('sent nothing at all; --quiet withholds the words, not the report');
+    eq(body.kind, 'said', 'the kind');
+    if (body.body !== null) throw new Error(`sent a body: ${JSON.stringify(body.body)}`);
+    return 'the turn was reported, the words were not';
+});
+
+await check('a report with an UNREACHABLE hub never blocks his prompt', async () => {
+    /*
+     * SHARPER THAN THE HEARTBEAT'S VERSION OF THIS. `UserPromptSubmit` runs BETWEEN HIM AND HIS OWN AGENT,
+     * and a non-zero exit from that event BLOCKS the prompt. A hub that is down must never be able to stop
+     * him talking to Claude Code.
+     */
+    const r = await runCc(['report', '--told'], {
+        stdin: JSON.stringify({ session_id: 's', cwd: root, prompt: 'hello' }),
+        url: 'http://127.0.0.1:1',
+    });
+    if (r.code !== 0) throw new Error(`exited ${r.code}; this event blocks the prompt when it fails`);
+    if (r.out.trim() !== '') throw new Error(`wrote to stdout: ${JSON.stringify(r.out)}`);
+    return 'exit 0, silent on stdout, reason on stderr';
 });
 
 /* --------------------------------------------------------------------------------- proving it can fail

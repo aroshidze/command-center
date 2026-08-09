@@ -36,7 +36,11 @@
 >   in `tests/prove.mjs` — *"A HELD TOOL CALL NEVER ENTERS THE COUNTS"* — because that claim is arithmetic and
 >   the only honest test is to count twice with one held.
 > - **All three features are OPT-IN per project and off by default.** `cc presence on`, `cc approvals on`,
->   `cc spend`. Do not switch any of them on unprompted; the second changes what a link to the hub can do.
+>   `cc spend`. Do not switch any of them on unprompted; the second changes what a link to the hub can do,
+>   and the first now sends the hub **what the assistant said each turn and what he typed** — which is the
+>   whole point of the project page and is still somebody's data. `cc presence on --no-words` is the same
+>   hooks with the text withheld, and the CLI prints the disclosure at the moment of consent rather than
+>   burying it in a document.
 >
 > **THE HUB HAS A VISUAL REFERENCE NOW, and it is `docs/ITERATION-LOG.md` §XXXI** — 8 August 2026. Four
 > earlier visual passes were all corrective; none had a target. §XXXI is the target: Linear, Raycast, Geist
@@ -155,8 +159,50 @@ whole vocabulary and it is a decision, not an accident — see [docs/RESEARCH.md
 what each extra feature would cost. Before adding anything, the test is: **does it remove a step from
 someone's day right now?**
 
-Explicitly banned: priorities, labels, due dates on tasks, assignees, sprints, epics, roadmaps,
-documentation pages, status summaries, anything that also lives in a repo.
+Explicitly banned: priorities, labels, due dates on tasks, assignees, sprints, epics.
+
+### A MAINTAINED DOCUMENT IS BANNED. A TIMESTAMPED REPORT IS THE PRODUCT.
+
+This line used to also ban "roadmaps, documentation pages, status summaries, anything that also lives in a
+repo", and that wording was aimed at the wrong target. On 9 August 2026 the owner said what he actually wants
+from this hub, and it is those things:
+
+> *"Imagine you're a project owner and you're opening the hub. You want to see what the project is about, where
+> we stand on the roadmap, what the latest AIs are reporting, what agents are reporting, what sub-agents are
+> reporting… It shouldn't matter if you opened Claude Code or if you opened your command center. The command
+> center should be more organized, richer, more intuitive and far better than Claude Code. We are creating this
+> hub because Claude Code is clunky."*
+
+**An agent reading the old wording would have refused that instruction, citing this file.** So the distinction
+has to be exact, because the reasoning behind the ban is still right:
+
+- **BANNED, and the reason is unchanged:** a field or page that asserts a *current* state which nothing keeps
+  true. `Roadmap: 60% complete`. A description of the project that somebody has to remember to edit. A copy of
+  something that lives in the repo. These drift, and a stale copy is worse than none — that is
+  `docs/RESEARCH.md` §7 and it has not stopped being true.
+- **THE PRODUCT, and this is the difference:** *what an agent reported, when it reported it, and who reported
+  it.* "As of 3h ago claude-code said the OAuth work is done and Stripe is next" cannot drift, because it is not
+  a claim about now — it is a record of a thing that was said. It ages visibly instead of lying quietly, which
+  is the same property that makes `noteReach` say "synced" rather than "read".
+
+The test for anything on a project page is therefore not "is this a status summary" but: **can it name who said
+it and when?** If yes, it belongs, and the timestamp is not decoration — it is what makes it honest. If no,
+it is a field somebody has to maintain and it is still banned.
+
+One thing to be accurate about rather than flatter him on: the hub cannot beat Claude Code at *doing the work* —
+it has the conversation, the diffs and the terminal, and this has none of those. What it can beat Claude Code at
+is everything Claude Code is structurally bad at: **many projects at once** (it sees one repo), **what happened
+while you were away** (it has no memory of that), and **being reachable when the machine is off**. Aim there.
+See [docs/BRIEF-THE-CONTROL-CENTER.md](docs/BRIEF-THE-CONTROL-CENTER.md).
+
+**This is now built, and `reports` is how.** `lib/reports.ts` and `POST /api/agent/report` store three kinds of
+observation, and every one of them passes the test above because the HARNESS is the author, not the agent:
+`said` is the `Stop` hook's `last_assistant_message`, `told` is `UserPromptSubmit`'s prompt, `waiting` is
+`Notification` reporting that Claude Code itself is waiting on a human. If you are about to add a fourth kind,
+the question is not whether it would be useful — it is whether an agent could make itself look good by
+choosing what to put in it. If it could, it is a status field with a new name.
+
+The place all of it comes together is **`/p/<slug>`** ([app/p/[slug]/page.tsx](app/p/%5Bslug%5D/page.tsx)).
 
 ## Read these two files before changing anything
 

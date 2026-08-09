@@ -59,14 +59,25 @@ import { humanDate, humanSpan } from './format';
 /**
  * An observation newer than this means something is working. Forty-five minutes.
  *
- * WHY IT IS NOT FIVE. A heartbeat arrives at SessionStart and at SessionEnd and at no point in between,
- * so the only mid-session evidence is `cc sync` — which `lib/snippet.ts` instructs agents to call at
- * several points during a session, but at EVENTS rather than on a timer. A build, a test run and a long
- * tool call can each be twenty minutes with nothing in between. Five minutes would report a working agent
- * as gone every time it did something slow.
+ * WHY IT IS NOT FIVE, and the reason CHANGED once reports shipped — which is worth recording, because the
+ * number did not.
+ *
+ * It used to be that a heartbeat arrived at SessionStart and SessionEnd and at no point in between, so the
+ * only mid-session evidence was `cc sync`, at events rather than on a timer. That was the argument for
+ * forty-five minutes. The `Stop` hook now reports every turn (`lib/reports.ts`), so on an opted-in project
+ * the evidence is far denser and a much shorter window would work.
+ *
+ * FORTY-FIVE STAYS, for two reasons that outlive the change. A project where nobody ran `cc presence on`
+ * still only has syncs — a shorter window would report those as gone. And a single turn can legitimately
+ * run for twenty minutes: a build, a test suite, one long tool call. The window has to be survivable by
+ * the quietest legitimate agent, not by the noisiest.
  *
  * WHY IT IS NOT FOUR HOURS. The window's whole job is to make "working now" mean something. A claim that
  * holds for half a day is not a claim about now.
+ *
+ * AND IT MUST STAY SMALLER THAN `RUN_GAP_MINUTES`. Cutting a run at a gap sets its `ended_at`, and a
+ * closed run inside this window reads as "it ran and stopped" — so a run gap shorter than this would
+ * report a working agent as finished. The relationship is the constraint; see lib/reports.ts.
  *
  * The error this window makes is deliberately one-directional: too long a gap reads as "last heard from"
  * rather than as "working", so the failure is understating activity. Overstating it — telling him an agent
