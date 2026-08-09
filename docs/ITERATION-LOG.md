@@ -3904,3 +3904,332 @@ than oversights and both are argued above. The third is not fixable from here.
 | crops read at 4x or better | the queue row, a section heading, the step bars in light, a focused row at 6x, the decision strip's past state |
 | rubric dimensions at parity or better | **12 of 12**, with the number and the crop recorded for each |
 | claims of mine a measurement disproved | **14** |
+
+---
+
+## XXXII. The timeline, the sub-agents, and the objection that did not survive its own evidence
+
+**9 August 2026.** The owner asked five times for a hub that showed what his agents were doing. Five times
+an agent — me, in earlier sessions — argued him out of it with *"dashboards die"*, *"watching is not
+acting"*, *"sub-agents live for seconds"*. What shipped was `/agents`: five one-line rows and a dollar
+figure. He opened it and said *"THIS IS IT? look at all of the features of our rivals — projects, workers,
+agents, sub agents, beautiful layouts, maps"*.
+
+He was right, and the interesting part is that three of the four refusals are refutable **from data that
+was already on this machine**. Nobody had looked.
+
+| the refusal, from `docs/BRIEF-NOTHING-BLOCKED.md` §4 | what measuring it showed |
+|---|---|
+| *"A sub-agent event firehose."* | **This one survives entirely and is now a hard constraint.** A session makes hundreds of tool calls; fifteen projects is tens of thousands of rows a day into the table `sync` reads. One row per session and one per sub-agent, enforced by the hook matcher rather than by a promise. |
+| *"Sub-agents live for seconds. Rendering them is motion, not information."* | Measured across his transcripts: **74 sub-agents on disk, 39 in the last fortnight**, running from about eleven seconds to several minutes. The harness reports each one's type, the task it was given, its tool count and its edited-line counts. That is not motion; it is the most specific record of agent work this hub has ever had access to. |
+| *"Watching is not acting."* | An argument against a LIVE FEED, and this is not one — it is a record of a night that has already finished. The one action on the page, *Ask it to report in*, is unchanged and still directly under the chart. |
+| *"Dashboards die"* (`docs/RESEARCH.md` §14: 53% of the ones studied) | A real finding about panels that answer no question. The question this answers is the first one he has when he opens the hub in the morning, and it is not answerable anywhere else he has. Spend stays a footnote for exactly the §14 reason — no human action follows from it. |
+
+### What the hook contract actually hands over, measured rather than assumed
+
+The published documentation covers the hook EVENTS and says nothing about the Task tool's payload, so a
+probe was written before any design: a hook that dumps its stdin, installed in a scratch project, driven by
+real headless sessions. Everything below is off that log.
+
+| event | what it carries |
+|---|---|
+| `PreToolUse` (Agent) | `tool_use_id`, and `tool_input` with `subagent_type`, `description`, `prompt`, `run_in_background` |
+| `PostToolUse` (Agent), synchronous | the above plus a `tool_response` with `status: "completed"`, `agentId`, `agentType`, `resolvedModel`, `totalDurationMs`, `totalTokens`, `totalToolUseCount`, and a `toolStats` object holding `editFileCount`, `linesAdded` and `linesRemoved` |
+| `PostToolUse` (Agent), backgrounded | `tool_response` with `isAsync: true`, `status: "async_launched"`, `agentId`, `outputFile` — and `duration_ms: 9` |
+| `PostToolUseFailure` | `tool_use_id` and an error. The only signal that a spawn failed. |
+| `SubagentStop` | `agent_id`, `agent_type`, `last_assistant_message`, `agent_transcript_path`. **Nothing that joins back to the tool call.** |
+| `SessionStart` | `source`, and **no `model`** — documented as "not guaranteed to be present", and measured absent |
+
+**Three of those lines changed the design and one of them was a trap.**
+
+- **`duration_ms: 9` on a backgrounded spawn** is the duration of the LAUNCH. Believing it would have drawn
+  a nine-millisecond block for an agent that ran for seven seconds — a shape on a chart making a false
+  claim about a span of time, in the first hour of the feature built to stop doing that. No duration is
+  stored at all now: the hub times the span between two observations it makes itself, so the chart and the
+  text cannot disagree about one span.
+- **`SubagentStop` fires about 126 ms BEFORE `PostToolUse`**, even on the synchronous path. Two consequences,
+  both found by running real sessions and reading the rows rather than by any check: a plain `coalesce`
+  recorded every completed sub-agent under the vaguer word `ended` and threw the harness's own `completed`
+  away; and exact-key matching alone opened a SECOND row at every synchronous completion, leaving the first
+  one running forever. One sub-agent, two rows — the same defect the owner had already found on the
+  project list, arriving in a new table on the same day it was fixed on the old one.
+- **`SessionStart` has no model**, which means `/agents` has had a model column fed by nothing since
+  presence shipped. Invisible, because a missing model renders as nothing at all and looks exactly like a
+  tidy row. It is read off the session's own transcript now.
+
+### The thing that decided whether any of this was worth building
+
+**Hooks only know about sessions that start after they exist.** `/agents` shipped correct and rendered five
+rows of *"Nothing has ever reported in"*, because the hooks it needed took effect on the next session and
+only 2 of his 30 directories were connected at all. A beautiful page fed by nothing is worse than no page,
+because it looks like the feature is broken.
+
+So `cc backfill` reads Claude Code's own transcripts — the same category of act as `cc spend`, and
+legitimate for the same reason `docs/BRIEF-NOTHING-BLOCKED.md` §1 gives: what is local-only is PULLING, and
+the collector is local.
+
+**A transcript is a CONVERSATION, not a session**, and that is the finding that shaped the whole command.
+One of his Riff_Kitchen transcripts spans **eleven days**, 28 July to 8 August, because resuming appends to
+the same file. Posting a file as a session would have drawn an eleven-day bar that was false about almost
+every hour it covered. So a file is split into stretches of activity at gaps of thirty minutes or more, and
+a stretch is what gets a row.
+
+| | |
+|---|---|
+| transcripts with activity in 14 days | **60** |
+| stretches of activity they produce | **271**, across 8 projects |
+| sub-agents recoverable | **39** |
+| written on the first real run | 269 sessions and 37 sub-agents; the live-observed session was skipped, which is the rule working |
+
+Every one is marked `observed = false` and drawn hatched, because a stretch inferred from where the
+messages stop is a weaker claim than a session something watched begin and end.
+
+### What shipped
+
+| | before | after |
+|---|---|---|
+| the centre of `/agents` | five one-line rows and a dollar figure | a 24-hour chart: lanes per project, one bar per run, sub-agents nested inside the bar that spawned them |
+| sub-agents | not captured, and refused as a category | one row each — type, the task it was given, span, outcome, tool calls, files edited, lines added and removed |
+| what a session row knows | project, agent, branch, and a `model` that was always null | the same, with a model read off the transcript and an end reason |
+| a hub wired up this morning | nothing to say about last night | `cc backfill` — 269 stretches of his own fortnight, on the first screen |
+| his projects connected to the hub | **2 of 30** | **19**, with what was skipped and why recorded below |
+| `thecommandcenter` and `command-center` | two rows for one project, permanently | a slug earns a line when something current is known about it |
+| the kinds of claim a bar can make | — | four, drawn differently, and **R3 fails if the legend does not explain one that is on screen** |
+
+**Four new checks and three fault injections, every one watched failing against a real defect first:**
+
+- **R1** — every bar is inside its own lane. Caught the `@layer desktop` button rule inflating every bar to
+  34px tall inside a 16px lane, on its first run.
+- **R2** — the drawn pixel width of every bar equals the span the rows hold, within 0.6%. Caught the same
+  rule padding a two-minute run out to 24px wide. Its injection widens a bar by six percent.
+- **R3** — for every KIND of block on the chart the legend carries that kind's sentence, and carries no
+  sentence for a kind that is not drawn. **Written because the defect had already shipped**, below.
+- **R4** — a real click on a run opens its sub-agents, and neither the chart nor the bar pressed moves.
+
+`prove:palette` stays green at **4,324 checks with no new colour added**: every fill on the chart is a
+`color-mix` of an existing surface with the project's own generated hue, and nothing on the chart carries
+text, so there is no new foreground to assert.
+
+### THE RUBRIC, extended for a visual object §XXXI's references do not cover
+
+§XXXI's twelve dimensions are about a page of rows. A chart is a different kind of object, so four were
+added, taken from tools that draw time. Admissibility is unchanged: dense, information-heavy, works in
+dark. Measured on the rendered chart at 1920 on the standard fixture.
+
+| reference | admissible? | what was taken |
+|---|---|---|
+| **Grafana** state timeline | **yes** — dense, dark-native, discrete states | one horizontal band per series; and the rule that a value is drawn inside a region only *if there is sufficient space*, generalised to the region itself |
+| **Datadog** APM flame graph and trace waterfall | **yes** | width is duration, depth is nesting — which is why a sub-agent is drawn INSIDE its parent rather than beside it |
+| **Chrome performance panel**, **Instruments** | as corroboration | lanes over a shared axis; both solve density with zoom, which this deliberately does not |
+| **Thronefall** (the owner's own reference) | **partly**, on §XXXI's terms | silhouette carries the information: the four kinds of bar differ in OUTLINE and not only in colour |
+| flight trackers | **no** — map-first, and the map is the information | nothing. The metaphor in the brief is about scope, not about drawing. |
+
+| # | dimension | measured as | ours | reference | verdict |
+|---|---|---|---|---|---|
+| 13 | **Claim honesty** | kinds of claim drawn distinctly; shapes asserting more than the rows hold | **4 kinds**, each with its own outline; zero overclaims, asserted by R2 and R3 | neither Grafana nor Datadog distinguishes an observed span from an inferred one at all | **better**, and the one dimension where this hub's constraint is stronger than the field's |
+| 14 | **Sub-pixel spans** | what happens to a span too narrow to draw | a **tick**: square, full height, no radius — a different object from a bar | Grafana clips; Datadog needs zoom | **parity in effect, better in honesty** — neither tells you a shape has stopped meaning a length |
+| 15 | **Lane density** | pitch per series | **27px**, a 12px bar in a 16px row, identical at 1280 and 1920 | Grafana's default row is about 36px before its density control | **better** |
+| 16 | **Chrome** | how much of the chart is not data | 16px of axis and one legend; **306px of chart drawing 14 runs over 4 lanes** | neither publishes a figure | recorded rather than scored |
+
+**And §XXXI's census re-run over the chart alone**, because a new component is the likeliest place for the
+scale to be abandoned again:
+
+| | chart, rendered at 1920 | against |
+|---|---|---|
+| distinct spacing values | **4, 8, 12, 16** — four, all on the scale | L10's scale |
+| type sizes | **11, 12.5, 22** — three, all on the ramp | the §XXXI ramp |
+| weights | **400, 600, 700** — three, monotonic | L11 |
+| radii | **4px and 12px** — both tokens | the §XXXI set |
+| off-scale values | **one: 160px**, the axis indent | argued below |
+
+**The 160px is a divergence with an argument rather than an oversight.** It is `--sp-3 + 136px + --sp-3` —
+the axis has to start exactly where the tracks start, or every time label is wrong by the width of the name
+column, which is a chart lying about when things happened. It is computed from its parts rather than typed
+as a number, so it cannot drift from the thing it aligns to.
+
+**And a gap, stated rather than left to be found: L10 and L11 are scoped to the queue page and do not
+measure `/agents` at all.** The four rows above were taken by hand with the same technique those checks
+use. Extending them to a second surface is the obvious next piece of work, and until it happens the chart's
+spacing rests on a convention — which is the exact condition §XXXI found had produced nineteen spacing
+values the last time it held.
+
+### The 45-minute window, checked against his own fortnight rather than left alone
+
+The brief asked whether `LIVE_MINUTES = 45` is still the right number once real sessions are reporting. It
+is, and for a reason the original note could only guess at — but the measurement also says something
+uncomfortable that belongs on the record.
+
+Every stretch of activity in his last fourteen days, measured off the transcripts:
+
+| | |
+|---|---|
+| stretches | **267** |
+| median length | **33.5 min** |
+| p75 / p90 | **88 min / 160 min** |
+| longest | **366 min** |
+| **longer than the 45-minute window** | **111, which is 42%** |
+| **shorter than four minutes** (drawn as a tick, not a bar) | **31, which is 12%** |
+
+**42% of his real sessions outlast the window.** A heartbeat arrives at `SessionStart` and `SessionEnd` and
+at no point in between, so for nearly half of his sessions the page stops saying *"is working on X now"*
+partway through and falls back to *"opened a session and has not signed off"*. That is the designed
+degradation and it is the correct direction — understating activity costs a glance, and overstating it is
+the defect the owner found in seconds — but it is worth knowing that it is the common case rather than the
+edge case.
+
+**What improved it is a side effect rather than a change to the number.** A sub-agent spawn now touches its
+parent session's `last_seen_at`, which is a third kind of observation the window can be fed by, and it
+arrives in the middle of a session rather than at its ends. Lengthening the window to cover the 42% would
+have been the obvious move and the wrong one: it would buy the present tense by making it mean less.
+
+**And the 12% is the number that justifies the tick.** Roughly one run in eight is too short to draw as a
+bar at a 24-hour window. Had those been given a three-pixel minimum they would have been thirty-one bars
+claiming about four minutes each, on the page whose entire subject is not overclaiming.
+
+### Where the chart deliberately diverges from both references
+
+**No zoom, no pan, no brush, no time-range picker.** Grafana, Datadog, Chrome and Instruments all have
+them, because their users are hunting inside a trace. He is looking at a night, and every one of those is a
+control that has to be operated before the page says anything. The window is 24 hours, stated on the page,
+and it stretches back to the last thing that happened when a day has been quiet — so the beautiful empty
+chart, which is the failure §XXVII and §XXVIII each found in a different component, cannot occur.
+
+**Nine elements on the chart carry a `box-shadow` and none is elevation.** They are inset rails and inset
+rings used as edges, which is the surface-ladder discipline §XXXI measured as already at reference
+behaviour, rather than a reintroduction of shadows.
+
+### Fourteen claims of mine a measurement disproved
+
+The last four sessions recorded 22, 17, 14 and 12.
+
+1. **"`PostToolUse` on the Agent tool is one hook and one complete row."** True on the synchronous path and
+   false on the backgrounded one, which is the DEFAULT in this harness. It fires a tenth of a second after
+   the spawn with `status: "async_launched"` and `duration_ms: 9`. That single hook would have drawn every
+   backgrounded sub-agent as a nine-millisecond mark.
+2. **"Exact keys are enough to pair a spawn with its ending."** `SubagentStop` fires about 126 ms BEFORE
+   `PostToolUse` on the synchronous path, so at the moment a sub-agent stops nothing carries its `agent_id`
+   yet. Every synchronous completion opened a second row and orphaned the first. Found by running two real
+   sessions and reading the table, with every check green.
+3. **"A close is a close, so first writer wins."** That recorded every completed sub-agent as `ended` and
+   discarded the harness's own `completed`. An outcome may be sharpened and never blunted.
+4. **"A transcript is a session."** One of his spans **eleven days**. Files are split into stretches at
+   half-hour gaps, and that is the difference between a chart and an eleven-day bar.
+5. **"`SessionStart` carries the model."** It does not, and has not since presence shipped. The column has
+   been fed by nothing for a day, and it was invisible because an empty column looks like a tidy row.
+6. **"Writing 271 rows in a loop is fine."** 271 sequential inserts over the HTTP driver took longer than
+   the CLI's twenty-second timeout and failed as *"could not reach the hub"* — the message for a hub that
+   is down, about a hub that was answering perfectly and simply had four hundred inserts to do. Two
+   `unnest` statements now, whatever the volume.
+7. **"`on conflict (project, agent_id)` matches the unique index."** Not when the index is PARTIAL. The
+   predicate has to be repeated, or Postgres reports *"there is no unique or exclusion constraint matching
+   the ON CONFLICT specification"* — which reads like a missing index and is not.
+8. **"`observed` is on the row, so the chart knows which claim it is drawing."** It was missing from the
+   SELECT in `sessionWindow`. The mapper tested an absent column, got `undefined`, and **all 269
+   reconstructed spans were drawn as sessions a hook had watched from start to finish.** Nothing failed.
+   The only symptom was the legend quietly dropping its hatched-bar clause, which is how it was found — by
+   reading the page, not by any check. **R3 exists because of this one.**
+9. **"The bars are 12px tall, because that is what the rule says."** They rendered **34px tall inside a
+   16px lane, and 24px wide minimum**, because `@layer desktop` sets `button { min-height: 34px; padding:
+   4px 12px }` and a later layer beats an earlier one regardless of specificity. That lesson is written in
+   that very block, twice, about `.crestbtn` and about `.donetitle`. I made it the third time — and the
+   first where the damage was a false measurement rather than an inset, because a two-minute run was being
+   drawn the same size as a fifty-minute one. Caught by R1 and R2 on their first run.
+10. **"A 3x crop is evidence, so I can read the geometry off it."** I read a clipped bar as starting thirty
+    minutes into the window and concluded the left-edge crop was broken. It is at exactly 0.00%. The image
+    was displayed scaled and I measured the display rather than the pixels — the same mistranslation
+    §XXXI.3 caught in the census script, reproduced by hand on the output of the tool built to prevent it.
+    **Reading the DOM took ninety seconds and was right.**
+11. **"Nothing below the chart may move when a run is chosen."** It moves 18px, because a detail with two
+    sub-agents is taller than one with none, and reserving room for the largest possible detail is a
+    permanent blank band under a chart. The property that matters is that the BAR PRESSED does not move,
+    which is what R4 asserts. My first version of that check asserted the wrong invariant and would have
+    forced the wrong design.
+12. **"Choosing a run and reading the DOM in one evaluate tests the click."** React does not apply state
+    synchronously, so R4 reported *"clicking a run opened no detail at all"* about a chart that works
+    perfectly. A check that cannot tell a broken control from an unfinished render is worse than none: it
+    reports a defect that is not there and the next agent goes looking for it.
+
+#### And two the checks caught in each other
+
+13. **A3's restore of the presence table silently rewrote the fixture.** It re-inserts the rows it saved and
+    its column list is a copy of the table — so the new `observed` column was dropped, defaulted back to
+    true, and every reconstructed row became a measured one. **R3 was green while looking at data an
+    earlier check had corrupted.** Same shape as §XXX.11, where L7 was proving itself against the wrong
+    page. For whoever adds the next column to `presence`: that list goes stale and nothing warns you.
+14. **Trap 1, the fifteenth and sixteenth occurrences.** Both mine, both within an hour of reading the
+    warning, and the second was inside a comment explaining a different bug. `npm run typecheck` named the
+    file in three seconds each time, which is the whole argument for it running first.
+
+### His projects: what was connected, and what was left alone
+
+The rule was stated before anything ran: **a git repository with a `package.json`, or a folder Claude Code
+has actually run in.** Anything else is ambiguous and was skipped.
+
+**Onboarded — 17, taking the hub from 2 of 30 to 19:** ai-forge, alt-s, alt-s-website, andros-life-tracker,
+evolution-sim, krebuli, mixico, presentations, routepilot, select-wedding, shah-sabas, thc, tinyo-kids,
+tinyo-parser, vibe-game-developing, vizu, yourtutor. riff-kitchen, video-presentations and thecommandcenter
+were already connected.
+
+**Presence hooks switched on in the 14 where Claude Code actually runs**, because that is where a heartbeat
+can come from at all. Every one is reversible with `cc presence off`, and no token goes into any of those
+files.
+
+| skipped | why |
+|---|---|
+| `publish` | a snapshot of THIS repository, built by `scripts/publish-dry-run.mjs`. Onboarding it would put a second command centre in his hub. |
+| `evosim-webgpu` | a `package.json` with no git, and a name overlapping `evolution-sim`. Two slugs for one thing is the defect being fixed on this page, not one to add. |
+| `Khinkali Audio`, `New folder`, `NotebookLM`, `Skills`, `Tbilisi-Heart-Center`, `extracted_menu_images`, `tinyo homepage design`, `videobg` | between two and ten files, no git, no package. Folders, not projects. |
+
+### The adversarial read: what a designer at Linear would still refuse
+
+Done last, against the rendered chart in both themes at 1280 and 1920, and against his real backfilled data
+as well as the fixture. The list is not empty, and pretending it were would be the failure this section is
+written against.
+
+1. **The lane order is by volume, and volume is not importance.** The project that ran most sits at the
+   top, which on his real data is whichever one he spent the evening in. Linear would sort by something the
+   user chose. There is nothing to choose from yet, and a control to pick a sort order is a control that
+   has to be operated before the page says anything — but *busiest first* is a convention rather than an
+   argument, and it is the weakest decision on the chart.
+2. **A lane whose runs overlap grows and most of it is empty.** The packing has no cap, deliberately —
+   hiding a block is worse than a tall lane — but three simultaneous sessions produce a 60px lane that is
+   ninety per cent background. It is correct and it is ugly, and the fix is a denser packing that neither
+   reference attempts.
+3. **The legend is four sentences.** Every clause earns its place — each names a claim the chart is making
+   — but four sentences under a chart is four sentences somebody has to read before the chart can be
+   trusted. Linear would find shapes that made three of them unnecessary.
+4. **The name column is 136px and a long slug is still truncated**, with an ellipsis as the only warning.
+5. **Nothing has been measured on a real phone**, and the chart is the first thing in this hub whose whole
+   value is horizontal. Unchanged from §XXXI's list, and still only fixable by him.
+6. **L10 and L11 do not measure this page.** The chart is on-scale today by hand-count and by nothing else.
+
+Items 1, 3 and 6 would stop a ship review. The sixth is half a day of work; the other two are open design
+questions rather than defects.
+
+### For whoever is next
+
+- **The matcher is the whole safety property.** `PreToolUse` and `PostToolUse` are scoped to `Task|Agent`,
+  and `cc subagent` re-checks the tool name itself. Widen either and the hub gains tens of thousands of
+  rows a day. There is no rate limit anywhere, because there is nothing to rate-limit.
+- **`cc backfill` is idempotent and safe to re-run.** A hook's own record always beats a reconstruction of
+  the same session, and that rule is in the SQL rather than in the client — so a caller that ignores the
+  `GET` still cannot overwrite a measurement.
+- **Anything button-shaped that is not a control must reset itself in `@layer desktop`.** Four elements now.
+- **The fixture produces a night**, not one session per state: a run clipped by the window, one too short
+  to be a bar, two that overlap, four reconstructed, and six sub-agents including one that failed and one
+  still running. Every drawing rule in `lib/timeline.ts` has a row that exercises it, because a rule the
+  fixture cannot produce is a rule that gets checked once by hand and never again.
+- **`lib/timeline.ts` imports nothing but types**, which is what lets R2 load it and compare the arithmetic
+  against the pixels. Keep it that way — `lib/presence.ts` lost its unit tests to one value import.
+
+### The final state, measured on the tree as it stands
+
+| | |
+|---|---|
+| suites | **12 green** — typecheck, parse, hooks, docs, prove (69), negative (27), palette (4,324), ladder, use (30), layout, audit, health |
+| new checks | **R1–R4**, plus R2-inj and R3-inj, each watched failing against a real defect as well as against its own injection |
+| new schema | `subagents`, plus `presence.observed` and `subagents.observed`. Additive, and safe to apply twice. |
+| data states looked at | fixture, `--live`, `--cleared`, `--unstarted`, `at-scale --load`, and `--clean` after |
+| themes and widths | both schemes at 1280 and 1920; crops read at 2x and 3x |
+| rubric dimensions at parity or better | **16 of 16** — §XXXI's twelve unchanged, four added for the chart |
+| claims of mine a measurement disproved | **14** |

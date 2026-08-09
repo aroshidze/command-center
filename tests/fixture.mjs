@@ -239,6 +239,10 @@ async function clear() {
     await db`delete from presence`;
     await db`delete from approvals`;
     await db`delete from spend`;
+    /* Same reasoning as the three above, and one more: a leftover sub-agent row would draw a mark inside
+     * a block that no longer has anything to do with it, which is the y2-* trap from §XXVIII wearing a
+     * new shape. Unscoped, because a fixture that only cleans its own rows leaves everybody else's. */
+    await db`delete from subagents`;
 }
 
 async function post(path, body) {
@@ -1061,6 +1065,88 @@ if (UNSTARTED) {
         await beat(P.b, 'claude-code', 'fixture-idle', 'session', 70, 8, 8, 'clear', 'main', 'claude-opus-5');
         await beat(P.c, 'codex', 'fixture-open', 'session', 190, 190, null, null, 'spike/pricing', 'claude-opus-4-8');
         await beat(P.a, 'cursor', 'sync', 'sync', 60 * 24 * 11, 60 * 24 * 11, null, null, null, null);
+
+        /*
+         * ==============================================================================================
+         * A NIGHT WORTH LOOKING AT — the runs the chart on /agents is drawn from.
+         * ==============================================================================================
+         *
+         * The four rows above are one session each and answer "what state is this project in". The chart
+         * asks a different question — what happened over the last day — and four blocks cannot exercise
+         * it: no overlap, no clipping at the left edge, no run too short to be a bar, no reconstruction,
+         * and no sub-agents at all. Every one of those is a distinct drawing rule in lib/timeline.ts and
+         * a rule the fixture cannot produce is a rule that gets checked once by hand.
+         *
+         * So this is a night: eleven more runs across the four projects, deliberately including
+         *
+         *   - one that STARTED BEFORE THE WINDOW, so the left-clipped edge is drawn every run
+         *   - one of two minutes, which is below the tick threshold and must NOT be drawn as a bar
+         *   - two that OVERLAP inside one project, which is what forces a lane onto two packing rows
+         *   - four RECONSTRUCTED ones, so the hatch and its legend clause are always on the page
+         *   - six sub-agents, including one that failed and one still running
+         *
+         * Times are relative to now, so the fixture is the same shape whenever it is loaded — the same
+         * rule the back-dated finished tasks above follow.
+         */
+        const run = async (project, agent, id, startedMin, endedMin, branch, model, observed = true,
+            seenMin = null) => {
+            await db`
+                insert into presence (project, agent, session, kind, started_at, last_seen_at, ended_at,
+                                      end_reason, branch, model, observed)
+                values (${project}, ${agent}, ${id}, 'session', ${agoMin(startedMin)},
+                        ${agoMin(seenMin ?? endedMin ?? startedMin)},
+                        ${endedMin == null ? null : agoMin(endedMin)},
+                        ${endedMin == null ? null : 'prompt_input_exit'}, ${branch}, ${model},
+                        ${observed})
+                on conflict (project, agent, session) do nothing`;
+        };
+        /* Began 26 hours ago: outside a 24-hour window, so its left edge is a crop and not a start. */
+        await run(P.big, 'claude-code', 'fx-clipped', 60 * 26, 60 * 22, 'master', 'claude-opus-5');
+        await run(P.big, 'claude-code', 'fx-night-1', 60 * 19, 60 * 17, 'master', 'claude-opus-5', false);
+        await run(P.big, 'claude-code', 'fx-night-2', 60 * 16, 60 * 14, 'master', 'claude-opus-5', false);
+        /* Two minutes. Below the tick threshold, and the check asserts it is a mark rather than a bar. */
+        await run(P.big, 'codex', 'fx-brief', 60 * 9 + 2, 60 * 9, 'master', 'claude-opus-4-8');
+        /* These two overlap, which is the only thing that puts a lane on a second packing row. */
+        await run(P.b, 'claude-code', 'fx-overlap-a', 60 * 7, 60 * 5, 'main', 'claude-opus-5');
+        await run(P.b, 'codex', 'fx-overlap-b', 60 * 6, 60 * 4, 'main', 'claude-opus-4-8');
+        await run(P.b, 'claude-code', 'fx-night-3', 60 * 21, 60 * 20, 'main', 'claude-opus-5', false);
+        await run(P.c, 'claude-code', 'fx-night-4', 60 * 12, 60 * 11, 'spike/pricing', 'claude-fable-5', false);
+        await run(P.c, 'claude-code', 'fx-night-5', 60 * 3, 60 * 2, 'spike/pricing', 'claude-opus-5');
+        await run(P.a, 'claude-code', 'fx-night-6', 60 * 20, 60 * 18, 'main', 'claude-opus-5');
+        /*
+         * Started thirteen hours ago, last heard from eleven hours ago, and never closed. Past the
+         * twelve-hour believable window, so it is drawn to the LAST THING SEEN with a broken edge —
+         * never to now. The two-hour gap between the start and the last sighting is the point of the
+         * row: with `last_seen_at` equal to `started_at` the block has no width and becomes a tick,
+         * which is a true drawing of a zero-width span and demonstrates nothing about a broken edge.
+         */
+        await run(P.a, 'claude-code', 'fx-orphan', 60 * 13, null, 'main', 'claude-opus-5', true, 60 * 11);
+
+        const sub = async (project, session, id, type, task, startedMin, endedMin, outcome,
+            calls, edits, added, removed, observed = true) => {
+            await db`
+                insert into subagents (id, project, agent, session, agent_id, type, task, model,
+                                       started_at, start_seen, ended_at, outcome, tool_calls, edits,
+                                       lines_added, lines_removed, observed)
+                values (${id}, ${project}, 'claude-code', ${session}, ${id}, ${type}, ${task},
+                        'claude-opus-5', ${agoMin(startedMin)}, true,
+                        ${endedMin == null ? null : agoMin(endedMin)}, ${outcome}, ${calls}, ${edits},
+                        ${added}, ${removed}, ${observed})
+                on conflict (id) do nothing`;
+        };
+        await sub(P.big, 'fixture-working', 'fx-sub-1', 'Explore',
+            'find every call site of the old pricing helper', 18, 12, 'completed', 34, 0, 0, 0);
+        await sub(P.big, 'fixture-working', 'fx-sub-2', 'general-purpose',
+            'rewrite the migration and run it', 11, null, null, null, null, null, null);
+        await sub(P.big, 'fx-clipped', 'fx-sub-3', 'code-reviewer',
+            'review the diff for the payload change', 60 * 25, 60 * 24, 'completed', 12, 2, 40, 18);
+        await sub(P.b, 'fx-overlap-a', 'fx-sub-4', 'Explore',
+            'work out which panel owns the empty state', 60 * 7 - 4, 60 * 6, 'completed', 9, 0, 0, 0);
+        await sub(P.b, 'fx-overlap-a', 'fx-sub-5', 'general-purpose',
+            'regenerate the fixtures', 60 * 6, 60 * 6 + 1, 'failed', 3, 0, 0, 0);
+        await sub(P.c, 'fx-night-4', 'fx-sub-6', 'Explore',
+            'read the competitor pricing pages', 60 * 12 - 3, 60 * 11 - 20, 'ended',
+            null, null, null, null, false);
 
         const spend = async (project, model, i, o, cw1h, cr, n) => {
             await db`

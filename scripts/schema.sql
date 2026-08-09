@@ -177,6 +177,17 @@ create table if not exists presence (
 
 create index if not exists presence_project_idx on presence (project, last_seen_at desc);
 
+-- OBSERVED BY A HOOK, OR RECONSTRUCTED AFTER THE FACT. This one bit is the honesty of the timeline.
+--
+-- Hooks only know about sessions that started after they were installed, so a hub set up this morning
+-- has nothing to say about last night — and a page that is empty the day it ships is the failure this
+-- feature has already had once. `cc backfill` reads Claude Code's own transcripts and reconstructs the
+-- stretches of activity in them: real timestamps written by the harness, but not what a SessionStart
+-- hook saw, and with boundaries inferred from gaps rather than reported by anything.
+--
+-- A block on a chart is a claim about a span of time. Two kinds of claim, stored apart and drawn apart.
+alter table presence add column if not exists observed boolean not null default true;
+
 -- APPROVALS: a tool call an agent is holding on, waiting for one tap on his phone.
 --
 -- ITS OWN TABLE, AND THAT IS THE ENFORCEMENT RATHER THAN A PROMISE. The brief's non-negotiables are
@@ -218,6 +229,72 @@ create table if not exists approvals (
 create unique index if not exists approvals_tool_use_uniq
     on approvals (project, tool_use_id) where tool_use_id is not null;
 create index if not exists approvals_pending_idx on approvals (status, expires_at);
+
+-- SUB-AGENTS: one row per sub-agent, and never one per tool call.
+--
+-- THE VOLUME CONSTRAINT IS THE WHOLE DESIGN. A Claude Code session makes hundreds of tool calls;
+-- fifteen projects is tens of thousands of writes a day, and the payload cliff §XXVI spent a session
+-- removing was caused by far less. So the hooks that write here are matched to the Task/Agent tool
+-- alone: one row when a sub-agent is spawned, closed when it stops. Nothing else in the harness
+-- produces a row, and no hook here fires on an ordinary tool call.
+--
+-- WHAT THE HARNESS ACTUALLY HANDS OVER, measured rather than assumed (docs/ITERATION-LOG.md §XXXII).
+-- `PostToolUse` on the Agent tool carries `tool_input.subagent_type`, `tool_input.description` and a
+-- `tool_response` holding `status`, `agentId`, `resolvedModel`, `totalToolUseCount` and a `toolStats`
+-- object with `editFileCount`, `linesAdded` and `linesRemoved`. That is name, task, outcome and what it
+-- touched, from one hook.
+--
+-- TWO PATHS, AND THE SECOND ONE IS WHY `agent_id` EXISTS. A synchronous sub-agent is closed by
+-- `PostToolUse` with `status: "completed"`. A BACKGROUNDED one returns `status: "async_launched"` about
+-- a tenth of a second after it starts, carrying `duration_ms: 9` — a figure about the launch and not
+-- about the work. Storing that would have drawn a nine-millisecond block for an agent that ran for
+-- seven seconds. The background path is closed by `SubagentStop`, which carries only `agent_id`.
+--
+-- NO DURATION COLUMN. The span is `started_at` to `ended_at`, both observed here, and the harness's own
+-- `totalDurationMs` is deliberately not stored beside them: one span with two recorded truths is the
+-- shape this codebase keeps being bitten by, and the chart and the text have to be reading the same
+-- number or one of them is lying.
+create table if not exists subagents (
+    id             text primary key,
+    project        text not null,
+    agent          text not null,
+    -- The PARENT session id, which is what lets a sub-agent be drawn inside the session block that
+    -- spawned it rather than on a lane of its own.
+    session        text not null,
+    tool_use_id    text,
+    -- Only knowable after the spawn, and the only identifier `SubagentStop` carries.
+    agent_id       text,
+    -- 'Explore', 'general-purpose', or whatever the project named its own. Sanitised at the boundary.
+    type           text not null,
+    -- The one-line description the parent gave it. Agent-authored text, so sanitised on the way in for
+    -- the same reason `approvals.preview` is.
+    task           text,
+    model          text,
+    started_at     timestamptz not null default now(),
+    -- FALSE when a closing event created this row, so `started_at` is when the hub first heard of it
+    -- rather than when it began. The timeline marks those blocks instead of drawing an unmeasured span
+    -- as though it had been measured.
+    start_seen     boolean not null default true,
+    ended_at       timestamptz,
+    -- completed | failed | ended | null. 'ended' is what the background path earns: SubagentStop fires
+    -- whether the work went well or not, so calling it success would be the same overclaim as saying an
+    -- agent "is working" on the evidence of one sync.
+    outcome        text,
+    tool_calls     integer,
+    edits          integer,
+    lines_added    integer,
+    lines_removed  integer,
+    created_at     timestamptz not null default now()
+);
+
+create unique index if not exists subagents_tool_use_uniq
+    on subagents (project, tool_use_id) where tool_use_id is not null;
+create unique index if not exists subagents_agent_uniq
+    on subagents (project, agent_id) where agent_id is not null;
+create index if not exists subagents_started_idx on subagents (started_at desc);
+create index if not exists subagents_session_idx on subagents (project, session, started_at);
+-- The same bit, for the same reason. See the note on presence.observed above.
+alter table subagents add column if not exists observed boolean not null default true;
 
 -- SPEND: TOKENS, and never money.
 --

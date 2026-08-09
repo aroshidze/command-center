@@ -156,6 +156,21 @@ export const SCHEMA_STATEMENTS: string[] = [
         primary key (project, agent, session)
     )`,
     `create index if not exists presence_project_idx on presence (project, last_seen_at desc)`,
+    /*
+     * OBSERVED BY A HOOK, OR RECONSTRUCTED AFTER THE FACT — and this column is the honesty of the whole
+     * timeline in one bit.
+     *
+     * A hub where the hooks were installed this morning knows nothing about last night, and a page that
+     * is empty on the morning it ships is the failure this feature already had once. So `cc backfill`
+     * reads Claude Code's own transcripts and reconstructs the stretches of activity in them. Those are
+     * real observations — message timestamps, written by the harness — but they are NOT what a
+     * SessionStart hook saw, and the boundaries of a stretch are inferred from gaps rather than reported.
+     *
+     * A block on a chart is a claim about a span of time. The two kinds of claim are different, so they
+     * are stored differently and drawn differently, rather than being quietly mixed and both asserted
+     * with the same confidence.
+     */
+    `alter table presence add column if not exists observed boolean not null default true`,
 
     /* ------------------------------------------------------------------------------------------
      * APPROVALS — a tool call an agent is holding on, waiting for one tap.
@@ -185,6 +200,72 @@ export const SCHEMA_STATEMENTS: string[] = [
     `create index if not exists approvals_pending_idx on approvals (status, expires_at)`,
 
     /* ------------------------------------------------------------------------------------------
+     * SUB-AGENTS — one row per sub-agent, and NEVER one per tool call.
+     *
+     * The refusal in docs/BRIEF-NOTHING-BLOCKED.md §4 was "a sub-agent event firehose", and half of
+     * that refusal survives contact with the owner's actual request and half does not. What survives is
+     * the volume argument: a session makes hundreds of tool calls, fifteen projects is tens of thousands
+     * of rows a day, and §XXVI was a whole session spent removing a payload cliff caused by far less.
+     * What does not survive is "sub-agents live for seconds, rendering them is motion" — measured on
+     * this machine they run for tens of seconds to several minutes, and what he asked to see is which
+     * ones ran and what they were asked to do, which is a fact rather than a motion.
+     *
+     * So the hooks that write here are matched to the Task/Agent tool ONLY. One row is opened when a
+     * sub-agent is spawned and closed when it stops. Nothing else in the harness produces a row.
+     *
+     * NO DURATION COLUMN, DELIBERATELY. The harness reports `totalDurationMs` on the synchronous path
+     * and reports nothing at all on the background path, and storing it would give one span two truths —
+     * the one the chart draws (`started_at` to `ended_at`, both observed here) and the one the text
+     * quotes. This codebase has been bitten by exactly that shape before; see the note on `stripped` in
+     * `mapApproval` for the same decision taken the same way.
+     * ---------------------------------------------------------------------------------------------- */
+    `create table if not exists subagents (
+        id             text primary key,
+        project        text not null,
+        agent          text not null,
+        /* The PARENT session, so a sub-agent can be nested inside the session block that spawned it. */
+        session        text not null,
+        /* The harness's id for the spawning tool call. Present on both hook events that can open a row,
+           which is what makes a re-post find the same row instead of making a second one. */
+        tool_use_id    text,
+        /* The harness's id for the sub-agent itself. Only knowable AFTER the spawn, and it is the only
+           thing SubagentStop carries — so it is what closes a backgrounded sub-agent. */
+        agent_id       text,
+        type           text not null,
+        task           text,
+        model          text,
+        started_at     timestamptz not null default now(),
+        /* False when the row was created by a CLOSING event, so its start time is when the hub first
+           heard of it rather than when it began. A block drawn from an unobserved start is a claim
+           about a span nobody measured, and the timeline says so on the block rather than quietly
+           drawing it. */
+        start_seen     boolean not null default true,
+        ended_at       timestamptz,
+        /* completed | failed | ended | null. "ended" is the honest outcome for the background path.
+           NO BACKTICKS IN HERE: this comment is inside a template literal in lib/schema.ts and a pair of
+           them closes it. Trap 1 in AGENTS.md, fifteenth occurrence, written minutes after reading it —
+           and typecheck named this file in three seconds, which is why it runs first.
+           SubagentStop fires whether the work went well or not and says nothing about which, so
+           claiming success there would be the same overclaim as "is working on" over a bare sync. */
+        outcome        text,
+        tool_calls     integer,
+        edits          integer,
+        lines_added    integer,
+        lines_removed  integer,
+        created_at     timestamptz not null default now()
+    )`,
+    `create unique index if not exists subagents_tool_use_uniq
+        on subagents (project, tool_use_id) where tool_use_id is not null`,
+    `create unique index if not exists subagents_agent_uniq
+        on subagents (project, agent_id) where agent_id is not null`,
+    /* The timeline reads a WINDOW of recent rows, so the index it needs is by time. `project` leads
+       because the lanes are per project and the fold groups on it. */
+    `create index if not exists subagents_started_idx on subagents (started_at desc)`,
+    `create index if not exists subagents_session_idx on subagents (project, session, started_at)`,
+    /* The same bit, for the same reason. See the note on presence.observed. */
+    `alter table subagents add column if not exists observed boolean not null default true`,
+
+    /* ------------------------------------------------------------------------------------------
      * SPEND — TOKENS, never money. The money is a fold over these numbers and a price table that
      * lives in lib/prices.ts, so a wrong price is fixed by deploying rather than by migrating.
      * ---------------------------------------------------------------------------------------- */
@@ -208,14 +289,16 @@ export const SCHEMA_STATEMENTS: string[] = [
  * preference rather than any real work, and a hub with no settings row is a hub showing default colours,
  * which is not a broken hub. /api/health should say the same thing.
  *
- * `presence`, `approvals` and `spend` are not here for a stronger version of the same reason: all three are
- * OPT-IN, and a hub where nobody installed a hook has nothing to put in them. An empty `presence` table and a
- * hub that cannot read its database must not produce the same message.
+ * `presence`, `approvals`, `subagents` and `spend` are not here for a stronger version of the same reason:
+ * all four are OPT-IN, and a hub where nobody installed a hook has nothing to put in them. An empty
+ * `presence` table and a hub that cannot read its database must not produce the same message.
  */
 export const CORE_TABLES: string[] = ['agents', 'events', 'notes', 'questions', 'tasks'];
 
 /** Every table this schema creates, core plus the rest. */
-export const ALL_TABLES: string[] = [...CORE_TABLES, 'settings', 'presence', 'approvals', 'spend'];
+export const ALL_TABLES: string[] = [
+    ...CORE_TABLES, 'settings', 'presence', 'approvals', 'subagents', 'spend',
+];
 
 /**
  * A lock id for `pg_advisory_lock`. Any constant works as long as nothing else in this database uses the

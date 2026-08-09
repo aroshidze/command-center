@@ -1852,10 +1852,22 @@ await check('A3 — all five presence states render, and not one sentence says "
     } finally {
         await db`delete from presence`;
         for (const r of before) {
+            /*
+             * `observed` HAS TO BE RESTORED TOO, and forgetting it silently rewrote the fixture. The
+             * column defaults to true, so a restore that omitted it turned every reconstructed row back
+             * into a measured one — and the checks that ran after this one were then measuring a page
+             * whose blocks had all quietly changed kind. R3 was green while looking at data this check
+             * had corrupted, which is the exact "a check that measures the wrong page" failure §XXX.11
+             * caught L7 doing.
+             *
+             * The rule for whoever adds the next column: this list is a copy of the table, so it goes
+             * stale every time the table grows, and nothing warns you.
+             */
             await db`insert into presence (project, agent, session, kind, started_at, last_seen_at, ended_at,
-                                           end_reason, branch, model)
+                                           end_reason, branch, model, observed)
                      values (${r.project}, ${r.agent}, ${r.session}, ${r.kind}, ${r.started_at},
-                             ${r.last_seen_at}, ${r.ended_at}, ${r.end_reason}, ${r.branch}, ${r.model})`;
+                             ${r.last_seen_at}, ${r.ended_at}, ${r.end_reason}, ${r.branch}, ${r.model},
+                             ${r.observed})`;
         }
     }
 });
@@ -1881,6 +1893,263 @@ await check('A3-inj — the "you" rule can fail, so a green A3 means something',
     assert(caught.caught === true,
         'a sentence rewritten into the second person was NOT caught, so A3 proves nothing');
     return 'a second-person sentence is caught by the same test A3 applies';
+});
+
+/* ==================================================================================================
+ * R1–R4 — THE CHART, AND THE ONE THING IT IS NOT ALLOWED TO DO.
+ *
+ * A block on a chart is a claim about a span of time, and this page has already shipped two defects that
+ * were both the same mistake: stating more than the evidence supports. So the checks here are not about
+ * whether the chart looks right — they are about whether any shape on it asserts something the rows do
+ * not say.
+ *
+ * All four read the RENDERED page rather than `buildTimeline`, on the same reasoning A3 records: a unit
+ * test on the fold would pass while the component drew whatever it liked, and that is the shape of half
+ * the defects in this project's history. The fold IS importable — it takes no value imports, unlike
+ * `lib/presence.ts` — so R2 loads it and compares the two, which is the strongest available form: the
+ * arithmetic and the pixels have to agree with each other AND with the database.
+ * ================================================================================================== */
+
+await check('R1 — every bar on the chart is inside its own lane and inside the window', async () => {
+    await b.goto('/agents');
+    const m = await b.evaluate(`(() => {
+        /* NO BACKTICKS IN HERE, comments included. Trap 1, sixteen occurrences. */
+        const lanes = [...document.querySelectorAll('[data-measure="run-lane"]')];
+        if (!lanes.length) return { none: true };
+        const bad = [];
+        let blocks = 0;
+        for (const lane of lanes) {
+            const track = lane.querySelector('.runtrack');
+            const t = track.getBoundingClientRect();
+            for (const el of lane.querySelectorAll('[data-measure="run-block"]')) {
+                blocks++;
+                const r = el.getBoundingClientRect();
+                if (r.width < 1 || r.height < 1) { bad.push('a bar with no size'); continue; }
+                if (r.left < t.left - 1 || r.right > t.right + 1) {
+                    bad.push(lane.dataset.project + ': a bar leaves its lane sideways');
+                }
+                if (r.top < t.top - 1 || r.bottom > t.bottom + 1) {
+                    bad.push(lane.dataset.project + ': a bar leaves its lane vertically');
+                }
+            }
+        }
+        return { lanes: lanes.length, blocks, bad };
+    })()`);
+    if (m.none) return 'NOT MEASURED — nothing ran in the window, so there is no chart';
+    assert(m.bad.length === 0, m.bad.slice(0, 3).join('; '));
+    assert(m.blocks > 0, 'the chart rendered lanes with no bars in them');
+    return `${m.blocks} bar(s) across ${m.lanes} lane(s), every one inside its own lane`;
+});
+
+await check('R2 — the drawn width of every bar equals the span the database holds', async () => {
+    /*
+     * THE CHECK THAT MATTERS MOST ON THIS PAGE. A bar 8% wide on a 24-hour window is asserting one hour
+     * and fifty-five minutes, and nothing else on the page would reveal it if that were wrong by an hour.
+     * So the rendered pixel width is compared against the row, through the fold, with a tolerance of one
+     * pixel for sub-pixel layout.
+     */
+    await b.goto('/agents');
+    const m = await b.evaluate(`(() => {
+        const out = [];
+        for (const lane of document.querySelectorAll('[data-measure="run-lane"]')) {
+            const t = lane.querySelector('.runtrack').getBoundingClientRect();
+            for (const el of lane.querySelectorAll('[data-measure="run-block"]')) {
+                const r = el.getBoundingClientRect();
+                out.push({
+                    project: lane.dataset.project, kind: el.dataset.kind,
+                    leftPct: ((r.left - t.left) / t.width) * 100,
+                    widthPct: (r.width / t.width) * 100,
+                    label: el.getAttribute('aria-label') || '',
+                });
+            }
+        }
+        return { drawn: out, w: (document.querySelector('.runtrack') || {}).clientWidth };
+    })()`);
+    if (!m.drawn.length) return 'NOT MEASURED — nothing ran in the window, so there is no chart';
+
+    const { neon } = await import('@neondatabase/serverless');
+    const db = neon(process.env.DATABASE_URL);
+    const iso = v => (v == null ? null : new Date(v).toISOString());
+    const sessions = (await db`
+        select project, agent, session, started_at, last_seen_at, ended_at, end_reason, branch, model,
+               observed from presence where kind = 'session'`)
+        .map(r => ({ ...r, started_at: iso(r.started_at), last_seen_at: iso(r.last_seen_at),
+            ended_at: iso(r.ended_at) }));
+    const subs = (await db`
+        select id, project, agent, session, type, task, model, started_at, start_seen, ended_at, outcome,
+               tool_calls, edits, lines_added, lines_removed, observed from subagents`)
+        .map(r => ({ ...r, started_at: iso(r.started_at), ended_at: iso(r.ended_at) }));
+    const { buildTimeline } = await import('../lib/timeline.ts');
+    const view = buildTimeline(sessions, subs, Date.now());
+    const expected = view.lanes.flatMap(l => l.blocks);
+
+    assert(expected.length === m.drawn.length,
+        `the chart drew ${m.drawn.length} bars and the rows produce ${expected.length}`);
+
+    /* Sorted the same way on both sides — by lane order then by position — so this compares like with
+     * like rather than depending on the DOM happening to match the array. */
+    const bad = [];
+    for (let i = 0; i < expected.length; i++) {
+        const e = expected[i];
+        const d = m.drawn[i];
+        if (e.tick) continue;    // a tick is a mark, not a span; R3 owns that rule
+        if (Math.abs(e.width - d.widthPct) > 0.6) {
+            bad.push(`${e.project}: drawn ${d.widthPct.toFixed(2)}% against ${e.width.toFixed(2)}%`);
+        }
+        if (Math.abs(e.left - d.leftPct) > 0.6) {
+            bad.push(`${e.project}: drawn at ${d.leftPct.toFixed(2)}% against ${e.left.toFixed(2)}%`);
+        }
+    }
+    assert(bad.length === 0, bad.slice(0, 3).join('; '));
+    return `${expected.length} bar(s) drawn at the width and position the rows say, within 0.6%`;
+});
+
+await check('R2-inj — a bar drawn at the wrong width is caught', async () => {
+    /*
+     * The defect this is written against is a real one and it is subtle: a chart whose bars are drawn from
+     * anything other than the rows — a min-width that stretches short runs, a container the percentages
+     * are measured against wrongly — asserts durations nobody measured, and looks completely normal.
+     */
+    await b.goto('/agents');
+    const caught = await b.evaluate(`(() => {
+        const el = document.querySelector('[data-measure="run-block"]');
+        if (!el) return { none: true };
+        const lane = el.closest('[data-measure="run-lane"]');
+        const t = lane.querySelector('.runtrack').getBoundingClientRect();
+        const before = el.getBoundingClientRect().width / t.width * 100;
+        el.style.width = (before + 6) + '%';
+        const after = el.getBoundingClientRect().width / t.width * 100;
+        return { caught: Math.abs(after - before) > 0.6 };
+    })()`);
+    if (caught.none) return 'NOT MEASURED — no chart on the page to distort';
+    assert(caught.caught === true,
+        'a bar widened by six percent was not detectable, so R2 proves nothing');
+    return 'a bar drawn six percent too wide is caught by the same comparison R2 makes';
+});
+
+await check('R3 — the chart states every kind of claim it is drawing, and no others', async () => {
+    /*
+     * THE DEFECT THIS EXISTS FOR ACTUALLY SHIPPED, in this session, for about an hour. `observed` was
+     * missing from the SELECT in `sessionWindow`, so the mapper read `undefined`, every one of 269
+     * reconstructed spans was classed as a session a hook had watched from start to finish, and the page
+     * drew them all as measurements. Nothing failed. The only visible symptom was the legend quietly
+     * losing its hatched-bar clause, because that clause is conditional on a reconstructed block existing.
+     *
+     * So the check is the symptom, generalised: for every KIND of block on the chart, the legend has to
+     * carry that kind's sentence, and it must not carry a sentence for a kind that is not drawn.
+     */
+    await b.goto('/agents');
+    const m = await b.evaluate(`(() => {
+        const kinds = new Set([...document.querySelectorAll('[data-measure="run-block"]')]
+            .map(el => el.dataset.kind));
+        const legend = document.querySelector('[data-measure="run-legend"]');
+        if (!legend) return { none: true };
+        const keys = new Set([...legend.querySelectorAll('.runkey')]
+            .map(el => [...el.classList].find(c => c.indexOf('k-') === 0)));
+        return { kinds: [...kinds], keys: [...keys], text: legend.textContent };
+    })()`);
+    if (m.none) return 'NOT MEASURED — nothing ran in the window, so there is no legend';
+
+    /* `measured` has no swatch: it is the default the sentence opens by describing, so its presence is
+     * asserted on the words rather than on a key. */
+    const missing = m.kinds.filter(k => k !== 'measured' && !m.keys.includes(`k-${k}`));
+    const extra = m.keys.filter(k => k !== undefined
+        && !m.kinds.includes(k.slice(2)) && k !== 'k-measured');
+    assert(missing.length === 0,
+        `the chart draws ${missing.join(', ')} and the legend never mentions ${missing.length === 1
+            ? 'it' : 'them'}`);
+    assert(extra.length === 0,
+        `the legend explains ${extra.join(', ')}, which nothing on the chart is drawing`);
+    assert(/watched from start to finish/.test(m.text),
+        'the legend never says what an ordinary bar means');
+    return `${m.kinds.length} kind(s) drawn — ${m.kinds.join(', ')} — and the legend covers each`;
+});
+
+await check('R3-inj — a kind drawn with nothing explaining it is caught', async () => {
+    await b.goto('/agents');
+    const caught = await b.evaluate(`(() => {
+        const legend = document.querySelector('[data-measure="run-legend"]');
+        const el = document.querySelector('[data-measure="run-block"]');
+        if (!legend || !el) return { none: true };
+        /* Plant a kind the legend cannot possibly explain, which is what a new block state added without
+           a legend clause would look like. */
+        el.dataset.kind = 'inferred-somehow';
+        const kinds = new Set([...document.querySelectorAll('[data-measure="run-block"]')]
+            .map(x => x.dataset.kind));
+        const keys = new Set([...legend.querySelectorAll('.runkey')]
+            .map(x => [...x.classList].find(c => c.indexOf('k-') === 0)));
+        const missing = [...kinds].filter(k => k !== 'measured' && !keys.has('k-' + k));
+        return { caught: missing.length > 0 };
+    })()`);
+    if (caught.none) return 'NOT MEASURED — no chart on the page';
+    assert(caught.caught === true,
+        'a block kind with no legend entry was not caught, so R3 proves nothing');
+    return 'a block drawn in a kind the legend does not explain is caught';
+});
+
+await check('R4 — choosing a run shows what it spawned, and moves nothing', async () => {
+    /*
+     * The sub-agents are the half of this feature he asked for by name — *"projects, workers, agents, sub
+     * agents"* — and until a real click opens one, "they are captured" is a claim about the database
+     * rather than about the page.
+     *
+     * IT ALSO ASSERTS THAT THE CHART DOES NOT MOVE, and the first version of this check asserted
+     * something stronger and wrong: that NOTHING below the chart moved. Measured, opening a run with two
+     * sub-agents pushes the legend down 18px, because the detail is a list and a list of two is taller
+     * than a list of none.
+     *
+     * That is not a defect and reserving space for it would be one — the reserved slot would have to be
+     * as tall as the largest detail the chart could ever produce, which is a permanent blank band under
+     * a chart most of the time. The property that actually matters is that the bar you just pressed is
+     * still under your finger, which means the CHART must not move. Content appearing below the fold of
+     * your attention is what disclosure is.
+     *
+     * The empty slot stays reserved at one line, so the common case — a run with no sub-agents — still
+     * moves nothing at all.
+     */
+    await b.goto('/agents');
+    /*
+     * THE CLICK AND THE READ ARE TWO EVALUATES, and the first version of this check did both in one and
+     * reported "clicking a run opened no detail at all" about a chart that works perfectly. React does
+     * not apply state synchronously inside the click handler, so reading the DOM in the same tick reads
+     * the page as it was before the press. A check that cannot tell a broken control from an unfinished
+     * render is worse than no check: it reports a defect that is not there, and the next agent goes
+     * looking for it.
+     */
+    const before = await b.evaluate(`(() => {
+        const withSubs = [...document.querySelectorAll('[data-measure="run-block"]')]
+            .find(el => el.querySelector('[data-measure="run-subagent"]'));
+        if (!withSubs) return { none: true };
+        const lanes = document.querySelector('[data-measure="run-lanes"]');
+        const bar = withSubs.getBoundingClientRect();
+        withSubs.click();
+        return { top: lanes.getBoundingClientRect().top, barTop: bar.top, barLeft: bar.left };
+    })()`);
+    if (before.none) return 'NOT MEASURED — no run in the window spawned a sub-agent';
+    await new Promise(r => setTimeout(r, 150));
+    const m = await b.evaluate(`(() => {
+        const lanes = document.querySelector('[data-measure="run-lanes"]');
+        const detail = document.querySelector('[data-measure="run-detail"]');
+        const lines = [...document.querySelectorAll('[data-measure="run-subagent-line"]')];
+        const picked = document.querySelector('.runblock.picked');
+        const now = picked ? picked.getBoundingClientRect() : null;
+        return {
+            opened: !!detail,
+            lines: lines.length,
+            text: detail ? detail.textContent : '',
+            moved: Math.abs(lanes.getBoundingClientRect().top - ${before.top}),
+            barMoved: now
+                ? Math.abs(now.top - ${before.barTop}) + Math.abs(now.left - ${before.barLeft})
+                : -1,
+        };
+    })()`);
+    assert(m.opened, 'clicking a run opened no detail at all');
+    assert(m.lines > 0, 'the run has sub-agents on the chart and none in its detail');
+    assert(m.moved <= 1,
+        `choosing a run moved the chart by ${Math.round(m.moved)}px, so the bars shift under the pointer`);
+    assert(m.barMoved === 0,
+        `the bar that was pressed moved ${m.barMoved}px, which is the one thing a chart may never do`);
+    return `a run with ${m.lines} sub-agent(s) opened; the chart and the bar pressed both stayed put`;
 });
 
 /* ---------------------------------------------------------------------------------------- done */

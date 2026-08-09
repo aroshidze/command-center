@@ -172,6 +172,33 @@ request or a presence line.** A schedule page would be a second, staler view of 
 What would change that: a scheduled agent that spends money or deploys without filing anything first — at which
 point the fix is that it should file something, not that the hub should grow a calendar.
 
+### 7. ~~Show him what his agents are doing~~ — DONE, 9 Aug 2026. §XXXII
+
+Not a step in this file either, and for a worse reason than step 6's: it was refused **five times**, and the
+list below still carries part of that refusal. What shipped on 8 August — five one-line rows and a dollar
+figure — he opened and answered in four words: *"THIS IS IT?"*
+
+Three of the four refusals do not survive their own evidence, and the evidence was already on the machine.
+**Sub-agents do not live for seconds**: 74 on disk, 39 in a fortnight, eleven seconds to several minutes,
+each reporting its type, its task, its tool count and its edited lines. *"Watching is not acting"* is an
+argument against a live feed, and a record of last night is not one. *"Dashboards die"* is about panels that
+answer no question, and this answers the first question he has in the morning.
+
+**The fourth refusal survives completely and is now a hard constraint**: no per-tool-call stream. One row
+per session and one per sub-agent, enforced by the hook matcher.
+
+| | before | after |
+|---|---|---|
+| what `/agents` shows | five rows and a dollar figure | a 24-hour chart — lanes per project, one bar per run, sub-agents nested inside the bar that spawned them |
+| sub-agents | invisible, and refused as a category | one row each: type, task, span, outcome, tool calls, files edited, lines changed |
+| a freshly wired hub | *"Nothing has ever reported in"* on every row | `cc backfill` reads Claude Code's own transcripts — 269 stretches of his own fortnight, before he does anything |
+| his projects connected | **2 of 30** | **19** |
+
+**The line in this file that changed meaning:** the refusal of *"a live agent status board"* below stands,
+and it is not what was built. That refusal is about a board an agent can post its own health to — *"it
+rewards an agent for stalling wordlessly"* — and there is still no field any agent can write about itself.
+Every shape on the chart is a timestamp something observed.
+
 ## What is deliberately not being built
 
 From the survey, and each for a stated reason: a second local app (two surfaces means the less-checked one goes

@@ -1,5 +1,5 @@
 import { requireAgent } from '../../../../lib/auth';
-import { projects, putSpend, SPEND_ELSEWHERE } from '../../../../lib/store';
+import { presenceRows, projects, putSpend, SPEND_ELSEWHERE } from '../../../../lib/store';
 import { fail, json, readJson } from '../../../../lib/http';
 
 export const dynamic = 'force-dynamic';
@@ -19,10 +19,25 @@ export const dynamic = 'force-dynamic';
  * `mixico` are three keys for one project, and there are cwds four levels deep inside a `node_modules`
  * folder.
  *
- * The hub already answers "which projects exist" — `projects()`, derived from the event log — so the CLI
- * sends the slugified path segments, deepest first, and the attribution happens HERE, next to that answer.
- * The alternative was the CLI guessing, which would have put the definition of "which project is this" in
- * two places and let the spend figure disagree with the queue about the same folder.
+ * The hub already answers "which projects exist" — so the CLI sends the slugified path segments, deepest
+ * first, and the attribution happens HERE, next to that answer. The alternative was the CLI guessing, which
+ * would have put the definition of "which project is this" in two places and let the spend figure disagree
+ * with the queue about the same folder.
+ *
+ * ==================================================================================================
+ * "WHICH PROJECTS EXIST" IS NOT ONLY THE EVENT LOG, AND ASSUMING IT WAS COST HIM MOST OF THE FIGURE
+ * ==================================================================================================
+ *
+ * `projects()` folds over `events`, so a project only appears once an agent has FILED something in it. On
+ * his real hub, the day seventeen folders were onboarded and a fortnight of activity was posted, that
+ * answer was still **four projects** — and `cc spend` reported four of its pairs going to `(elsewhere)`
+ * against those four. A project the hub has watched sessions run in for two weeks was, for the purposes of
+ * attributing money, a folder it had never heard of.
+ *
+ * So the known set is the union of the event log and `presence`. A project the hub has OBSERVED is a
+ * project the hub knows about, whether or not an agent has got round to filing a task in it — and presence
+ * rows are exactly what the last fortnight of backfill produces. Nothing about the outward-in walk or the
+ * `(elsewhere)` sentinel changes; the set it consults simply stopped being half the answer.
  *
  * ==================================================================================================
  * ANYTHING IT CANNOT ATTRIBUTE IS REPORTED, NEVER DROPPED AND NEVER GUESSED
@@ -36,11 +51,21 @@ export const dynamic = 'force-dynamic';
  */
 
 
+/**
+ * Every slug the hub has any evidence of: something was filed in it, or something was seen running in it.
+ *
+ * The two reads run concurrently and both are already bounded — `projects()` is one row per project and
+ * `presenceRows()` is `distinct on (project, agent)`, so neither grows with time.
+ */
+async function knownProjects(): Promise<Set<string>> {
+    const [filed, seen] = await Promise.all([projects(), presenceRows()]);
+    return new Set([...filed.map(p => p.slug), ...seen.map(r => r.project)]);
+}
+
 export async function GET(req: Request) {
     try {
         requireAgent(req);
-        const known = await projects();
-        return json({ ok: true, projects: known.map(p => p.slug) });
+        return json({ ok: true, projects: [...await knownProjects()] });
     } catch (e) {
         return fail(e);
     }
@@ -53,7 +78,7 @@ export async function POST(req: Request) {
         const rows = Array.isArray(body.rows) ? body.rows : null;
         if (!rows) return json({ ok: false, error: '`rows` must be an array' }, 400);
 
-        const known = new Set((await projects()).map(p => p.slug));
+        const known = await knownProjects();
 
         /*
          * WALK THE PATH OUTWARD-IN, taking the first segment the hub recognises.

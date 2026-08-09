@@ -1308,6 +1308,334 @@
      * pair is how the emblem spent a year at 1.4:1 in the light theme.
      * ============================================================================================== */
 
+    /* ==============================================================================================
+     * WHAT RAN — the chart, and every rule in it is about not overclaiming
+     * ==============================================================================================
+     *
+     * THE REFERENCES, and what each one actually contributed (docs/ITERATION-LOG.md §XXXII has the
+     * admissibility table). Grafana's state timeline: one horizontal band per series, discrete regions,
+     * and a label drawn inside a region only when it fits — which generalises to the region itself and
+     * is where the tick-instead-of-a-minimum-width-bar rule comes from. Datadog's flame graph: width is
+     * duration and depth is nesting, so a sub-agent is drawn INSIDE its parent rather than beside it.
+     * Thronefall, the owner's own reference: silhouette carries the information — a run should be
+     * identifiable by its shape before any of its text is read, which is why the four kinds of block
+     * differ in outline rather than only in colour.
+     *
+     * AND WHAT THRONEFALL WOULD WRECK HERE, which is the same thing §XXXI found: a distinctive
+     * silhouette repeated many times is a wallpaper. So the project hue is MIXED into the surface
+     * rather than used at full strength — fifteen saturated bars would be a paint chart, and the lane
+     * already says which project it is, twice.
+     *
+     * NO NEW COLOUR TOKEN. Every fill here is a `color-mix` of an existing surface with the project's
+     * own generated hue, which is why `prove:palette` needs no new pair: nothing in this chart carries
+     * text, so nothing in it has a foreground to assert. The one exception is the axis labels, and they
+     * are `--mute`/`--dim` on `--s0`, both of which have been asserted since the palette existed.
+     * ============================================================================================ */
+
+    .runchart { margin-top: var(--sp-4); }
+    .runhead { display: flex; align-items: baseline; gap: var(--sp-3); flex-wrap: wrap; }
+    .runhead h2 { margin: 0; }
+    /* The window, and the counts. A footnote to the chart, so it is quieter than the chart. */
+    .runwhen { margin: 0; color: var(--mute); font-size: var(--t-sm); line-height: 1.5; }
+    .runwhen b { color: var(--dim); font-weight: var(--w-med); }
+
+    /*
+     * THE AXIS SITS ABOVE THE LANES AND IS INDENTED BY THE NAME COLUMN, because a time label that does
+     * not line up with the track it describes is worse than no label: it is a label that is wrong by
+     * exactly the width of the names.
+     */
+    /*
+     * THE INDENT IS COMPUTED FROM THE PARTS RATHER THAN GUESSED. It is the lane's left padding plus the
+     * name column plus the gap, and the first version had it as a single 148px that was twelve pixels
+     * out — a time label wrong by exactly the width of the names, which is the sort of error that looks
+     * like a rendering wobble and is actually the axis lying about when things happened.
+     */
+    .runchart { --runname-w: 136px; --runindent: calc(var(--sp-3) + var(--runname-w) + var(--sp-3)); }
+    .runaxis {
+        position: relative; height: 16px; margin: var(--sp-2) 0 0 var(--runindent);
+        border-bottom: 1px solid var(--line);
+    }
+    .runtick {
+        position: absolute; bottom: 2px; transform: translateX(-50%);
+        font-size: var(--t-xs); letter-spacing: var(--track-caps);
+        color: var(--mute); white-space: nowrap;
+    }
+    /* Midnight, or the first of a month in the wide window. One tier up, and nothing else changes —
+       a date is a stronger fact than an hour, not a different kind of thing. */
+    .runtick.major { color: var(--dim); }
+
+    /*
+     * THE PHONE, AND THIS IS A REAL DEFECT RATHER THAN A REFINEMENT.
+     *
+     * Eight labels across the chart is the density both references land on and it is right at 1280 and
+     * 1920. At 390 the same eight rendered as `21:0 8 Aug3:006:009:012:015:018:00` — not tight, but a
+     * run of characters that had stopped being times at all. Every second mark is dropped below 720px,
+     * chosen by the clock in `lib/timeline.ts` so midnight always survives, and the name column narrows
+     * to give the chart back the width it needs to mean anything.
+     *
+     * The base is the phone and the desktop is the override, everywhere else in this stylesheet. Here it
+     * is the other way round on purpose: the chart's honest form is the wide one, and the narrow rules
+     * are subtractions from it. Writing it the usual way would have made the desktop chart a set of
+     * additions to a phone chart, which is not how this object is designed.
+     */
+    @media (max-width: 720px) {
+        .runchart { --runname-w: 84px; }
+        .runtick.droppable, .runline.droppable { display: none; }
+        .runname { font-size: var(--t-xs); }
+    }
+
+    /*
+     * The grid sits BEHIND the lanes, inside the same rounded box, indented by the name column so a
+     * line lands exactly under its own label. `pointer-events: none` because it is scenery: every
+     * clickable thing in this chart is a run.
+     */
+    .runlanes-wrap { position: relative; }
+    .rungrid {
+        position: absolute; inset: 0 0 0 var(--runindent);
+        pointer-events: none; z-index: 1;
+    }
+    .runline {
+        position: absolute; top: 0; bottom: 0; width: 1px;
+        background: color-mix(in oklab, var(--line) 55%, transparent);
+    }
+    /* Midnight is a boundary rather than a tick, so it is the one line allowed to be seen. */
+    .runline.major { background: var(--line); }
+
+    .runlanes {
+        position: relative; z-index: 2;
+        list-style: none; margin: 0; padding: 0;
+        border: 1px solid var(--line); border-radius: var(--radius);
+        background: transparent; overflow: hidden;
+    }
+    /* The panel colour moves to the wrapper, so the grid can be drawn between the surface and the
+       lanes rather than over the top of the bars. */
+    .runlanes-wrap {
+        background: var(--s1); border-radius: var(--radius);
+    }
+    /*
+     * A LANE IS A ROW, not a card, for the reason the presence list is: a stack of bordered rectangles
+     * is the shape §XXVIII removed from the record by subtraction. The project's hue is a 3px inset
+     * edge, the same construction `.pgroup` and `.presrow` already use, so one project is recognisable
+     * across three surfaces without reading its name.
+     */
+    .runlane {
+        display: flex; align-items: center; gap: var(--sp-3);
+        padding: var(--sp-1) var(--sp-3);
+        border-top: 1px solid var(--line);
+        box-shadow: inset 3px 0 0 0 var(--proj, transparent);
+    }
+    .runlane:first-child { border-top: 0; }
+    .runname {
+        flex: 0 0 var(--runname-w); min-width: 0;
+        font-size: var(--t-sm); color: var(--dim); letter-spacing: var(--track-md);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /*
+     * The track's height is a FUNCTION OF HOW MANY ROWS THE LANE NEEDS, and the packing that decides
+     * that is in lib/timeline.ts with no cap on it. Two sessions at once in one project is real — two
+     * terminals — and overlapping them into one row would hide a block with nothing to say so.
+     */
+    /*
+     * `overflow: hidden` because the right-hand end of the window is NOW, and a bar that reaches it is
+     * meant to stop there. A two-pixel tick at 99.9% would otherwise hang outside the lane and read as
+     * a run that happened after the present moment.
+     */
+    .runtrack {
+        position: relative; flex: 1 1 auto; overflow: hidden;
+        height: calc(var(--rows, 1) * 16px);
+    }
+
+    /*
+     * ONE RUN. A button rather than a div because it is the thing you pick to read the detail, and a
+     * control a keyboard cannot reach is the K4 defect this project has already caught once.
+     */
+    .runblock {
+        position: absolute; height: 12px; margin: 0; padding: 0;
+        /*
+         * THE BASE BUTTON RULE HAS TO BE UNDONE HERE, ALL OF IT, and the first render of this chart is
+         * what showed why: `button` sets `min-height: 44px`, `width: 100%` and `display: block` because
+         * a thumb is imprecise, and every one of those is exactly wrong for a shape whose width IS a
+         * duration. The bars came out 44px tall, spilled through the lane below and drew one project's
+         * work inside another project's row. `min-height` is the one that did the damage and it is the
+         * one no screenshot at 1x would have explained.
+         *
+         * The affordance is not lost: `:focus-visible` below is the ring, and the whole lane is only
+         * 16px of stack, so the target is the bar itself rather than a padded box around it.
+         */
+        min-height: 0; width: auto; display: inline-block;
+        border: 0; border-radius: var(--radius-xs);
+        background-color: color-mix(in oklab, var(--proj) 30%, var(--s2));
+        cursor: pointer; min-width: 3px;
+        /* No transition on position or size. A bar carries a claim about time, and hard constraint:
+           nothing that carries truth may move. Only the ring changes on hover. */
+        transition: box-shadow var(--t-quick) var(--ease);
+    }
+    .runblock:hover { box-shadow: 0 0 0 1px var(--line-strong); }
+    .runblock:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+    .runblock.picked { box-shadow: 0 0 0 2px var(--focus); }
+
+    /*
+     * STILL GOING: NO RIGHT-HAND EDGE. The bar dissolves into the lane rather than stopping, because
+     * there is no end to draw and a clean right edge is exactly the claim that would be false. The mask
+     * leaves `background-color` intact, which is what keeps this measurable by C1/C2's canvas rather
+     * than reporting as an unmeasurable gradient.
+     */
+    .runblock.k-running {
+        border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+        mask-image: linear-gradient(to right, #000 62%, transparent 100%);
+    }
+    /*
+     * STARTED AND NEVER CLOSED, and too old to believe. Drawn to the LAST THING SEEN — never to now —
+     * and stopped with a dotted edge, so the eye is told that the right-hand end is where the evidence
+     * ran out rather than where the work did.
+     */
+    .runblock.k-unterminated {
+        border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+        border-right: 2px dotted var(--mute);
+        background-color: color-mix(in oklab, var(--proj) 16%, var(--s2));
+    }
+    /*
+     * RECONSTRUCTED FROM THE TRANSCRIPT: HATCHED, and the first attempt at this was wrong in a way only
+     * a 2x crop showed.
+     *
+     * It was drawn HOLLOW — a near-invisible fill with a thin ring — on the reasoning that filled versus
+     * outlined is the plainest way to say "inferred". Two things were wrong with that. The distinction
+     * was confounded with the project hue, so a muted reconstructed bar and a muted project's measured
+     * bar looked the same and two bright ones looked like a different category. And on the morning this
+     * ships almost every bar is reconstructed, so "hollow" would have made his first look at the feature
+     * a faint chart of outlines.
+     *
+     * A fine diagonal hatch keeps the weight and moves the distinction OFF the colour axis entirely: it
+     * survives any hue, any palette, and both themes, because it is a texture rather than a tone.
+     * Hatching has meant estimated-or-inferred in charts for as long as charts have been printed.
+     *
+     * The opaque `background-color` is declared underneath the stripes deliberately — AGENTS.md trap 2:
+     * an element painted only with a gradient has an unknowable colour behind it and the contrast checks
+     * report it as unmeasurable rather than passing it.
+     */
+    .runblock.k-reconstructed {
+        background-color: color-mix(in oklab, var(--proj) 22%, var(--s2));
+        /* Against the LANE colour, not against a translucent copy of the panel. The first version
+           mixed --s1 at 70% into transparency and the hatch was invisible at 2x — a texture whose
+           stripes are within a few percent of their own fill is a flat fill with extra rules. */
+        background-image: repeating-linear-gradient(
+            135deg,
+            transparent 0 2px,
+            var(--s1) 2px 4px);
+        box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--proj) 35%, var(--line));
+    }
+    .runblock.k-reconstructed:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+    /* Began before the window: the left edge is a crop and not a start, so it is not capped either. */
+    .runblock.clipped { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+
+    /*
+     * A TICK IS NOT A NARROW BAR — it is a different object, and it has to look like one.
+     *
+     * Square rather than rounded, and full height rather than the bar's 12px, so nothing about it reads
+     * as a rectangle with a length. It says "something ran here" and says nothing about how long, which
+     * is exactly the state of the evidence at this scale.
+     */
+    .runblock.istick {
+        width: 2px; min-width: 2px; height: 14px; border-radius: 0;
+        mask-image: none; border-right: 0;
+        background-color: color-mix(in oklab, var(--proj) 60%, var(--s2));
+    }
+
+    /*
+     * THE SUB-AGENTS, NESTED INSIDE THE RUN THAT SPAWNED THEM — Datadog's depth-is-nesting, at the one
+     * depth this hub has. A band along the bottom of the parent, positioned against the parent's own
+     * span, so it cannot drift out of the block it belongs to.
+     */
+    /*
+     * THE BAND IS THE PROJECT'S OWN HUE AT FULL STRENGTH, and the first version used `--text`, which is
+     * a lesson about measuring both themes rather than one.
+     *
+     * `--text` is maximum-contrast ink. On the dark theme it is white on a mid-dark bar and reads as a
+     * quiet underline; on the light theme it is near-black on a pale bar and became the loudest thing on
+     * the whole chart — a sub-agent shouting over the run that spawned it. The asymmetry is not in the
+     * ink, it is in the BAR: the fill is a mix toward the theme's surface, so it is dark in one scheme
+     * and pale in the other, and a fixed ink cannot sit correctly on both.
+     *
+     * `--proj` is fixed at L 0.78, so it is lighter than the dark theme's bar and darker than the light
+     * theme's. One declaration, opposite directions, correct in both — and it keeps the mark inside the
+     * project's identity instead of introducing a sixth thing that is white.
+     */
+    .runsub {
+        position: absolute; bottom: 0; height: 4px; min-width: 2px;
+        border-radius: 0 0 var(--radius-xs) var(--radius-xs);
+        background-color: var(--proj);
+    }
+    .runsub.istick { width: 2px; border-radius: 0; }
+    /* Still running: the same no-right-edge rule the parent follows, for the same reason. */
+    .runsub.k-running { mask-image: linear-gradient(to right, #000 55%, transparent 100%); }
+    .runsub.k-unterminated { background-color: var(--mute); }
+    .runsub[data-outcome="failed"] { background-color: var(--bad); }
+
+    /*
+     * THE DETAIL SLOT IS ALWAYS IN THE DOCUMENT. Choosing a run must not move anything below it — a
+     * chart that reflows the page when you touch it is a chart you stop touching, and it is the same
+     * reserved-slot decision the ask card's `.state` already makes for the same reason.
+     */
+    /*
+     * 34px because that is the tallest the one-line detail gets, and reserving it is what stops the
+     * legend below from jumping when a run is chosen. The margin below is the legend's own, so this has
+     * none of its own — two adjacent margins for one gap is how the nineteen-value spacing census
+     * happened.
+     */
+    .rundetailslot { min-height: 34px; margin-top: var(--sp-2); }
+    .rundetailslot + .presnote { margin-top: 0; }
+    .runhint { margin: 0; color: var(--mute); font-size: var(--t-sm); }
+    .rundetail {
+        display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap;
+        font-size: var(--t-md); color: var(--dim);
+    }
+    .rundetail b { color: var(--text); font-weight: var(--w-med); }
+    .runsay { color: var(--dim); }
+    .runmeta { color: var(--mute); font-size: var(--t-xs); font-family: var(--mono); }
+
+    .runsubs {
+        list-style: none; margin: var(--sp-1) 0 0; padding: 0;
+        flex: 1 1 100%; display: flex; flex-direction: column; gap: var(--sp-1);
+    }
+    .runsubs li {
+        display: flex; align-items: baseline; gap: var(--sp-2);
+        font-size: var(--t-sm); color: var(--mute);
+    }
+    .runpip {
+        width: 6px; height: 6px; border-radius: var(--radius-pill);
+        background: var(--dim); flex: 0 0 auto; align-self: center;
+    }
+    .runsubs li[data-outcome="failed"] .runpip { background: var(--bad); }
+    .runpip.k-running { background: var(--ok); }
+    .runsubtype { color: var(--dim); font-weight: var(--w-med); }
+    .runsubtask { color: var(--dim); }
+    .runsubwhen { color: var(--mute); }
+
+    /* The legend's own swatches, drawn with the same rules as the things they explain rather than
+       described in words that could drift from them. */
+    .runkey {
+        display: inline-block; width: 18px; height: 8px; vertical-align: middle;
+        border-radius: var(--radius-xs);
+        background-color: var(--s3);
+    }
+    .runkey.k-running {
+        border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+        mask-image: linear-gradient(to right, #000 55%, transparent 100%);
+    }
+    .runkey.k-unterminated {
+        border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+        border-right: 2px dotted var(--mute);
+    }
+    .runkey.k-reconstructed {
+        background-color: var(--s3);
+        background-image: repeating-linear-gradient(
+            135deg,
+            transparent 0 2px,
+            color-mix(in oklab, var(--s1) 70%, transparent) 2px 4px);
+        box-shadow: inset 0 0 0 1px var(--line-strong);
+    }
+
     .preslist { list-style: none; margin: var(--sp-2) 0 0; padding: 0; }
     /*
      * A ROW, NOT A CARD. Fifteen bordered rectangles is the shape §XXVIII removed from the record by
@@ -1358,6 +1686,31 @@
     .presask { width: auto; flex: 0 0 auto; align-self: center; }
     /* The caveat under the list. A footnote to the list, so it is quieter than the list. */
     .presnote { color: var(--mute); font-size: var(--t-sm); margin-top: var(--sp-3); }
+
+    /*
+     * THE PRESENCE ROW WRAPS ON A PHONE, and this was found by shooting 390 for the chart and looking at
+     * what was underneath it.
+     *
+     * `.presmeta` is `nowrap` with `margin-left: auto`, which is right on a desktop and takes about 180px
+     * of a 390px row once a project has a branch, a model AND a spend figure — leaving the sentence about
+     * a hundred pixels to live in. It rendered **one word per line**: "Nothing / has / looked / at /
+     * tuck-shop / since".
+     *
+     * It only appeared now because until this session almost nothing had a branch and a model to show —
+     * `SessionStart` never sent a model, so the column was empty everywhere. Fixing that fact is what
+     * revealed the layout that had been waiting for it, which is the ordinary way a phone defect surfaces
+     * here: a field starts arriving and the row that reserved no space for it gives way.
+     *
+     * The sentence takes the full width and the facts drop to their own line with the control beside
+     * them. Nothing is hidden — a branch and a model are two of the three things this page exists to
+     * report.
+     */
+    @media (max-width: 560px) {
+        .presrow { flex-wrap: wrap; }
+        .preswhat { flex: 1 1 100%; }
+        .presmeta { margin-left: 0; }
+        .presask { margin-left: auto; }
+    }
 
     /*
      * THE ONE PRESENCE SENTENCE ON THE BOARD — inside the empty card, and nowhere else.
@@ -3223,6 +3576,25 @@
          * other control-sizing exceptions (`button.quiet`, `button.copy`) that this block already carries.
          */
         .crestbtn { min-height: 0; padding: 0; }
+        /*
+         * AND A FOURTH, and this one is the most expensive of them, because the control it deforms is a
+         * MEASUREMENT.
+         *
+         * `.runblock` is a bar on the timeline: its width is a duration and its height is a lane. It
+         * declares `min-height: 0`, `padding: 0` and `width: auto` in `@layer components` and lost all
+         * three to the rule above — so every bar rendered **34px tall inside a 16px lane** and **24px
+         * wide minimum**, which is 24px of horizontal padding turning a two-minute run into something
+         * drawn the same size as a fifty-minute one.
+         *
+         * That is not a cosmetic loss like the crest's 11px inset was. A chart whose bars are padded out
+         * to a control's minimum size is a chart asserting durations that nobody measured, on the one
+         * page whose entire subject is not overclaiming.
+         *
+         * It was caught by R1 and R2 in `prove:use` on their first run — which is the argument for
+         * writing the check before looking at the screenshot, because at 1x the bars looked plausible
+         * and the lanes looked merely generous.
+         */
+        .runblock { min-height: 0; padding: 0; width: auto; }
         /*
          * AND THE SAME THING AGAIN, on the two buttons that are supposed to look like text.
          *

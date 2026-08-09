@@ -1,5 +1,29 @@
 # Command Center — agent guide
 
+> **`/agents` IS A TIMELINE NOW, and it captures sub-agents — 9 August 2026, `docs/ITERATION-LOG.md`
+> §XXXII.** The owner asked five times for a hub that showed what his agents were doing; five times an
+> agent argued him out of it, and what shipped was five one-line rows and a dollar figure. He opened it and
+> said *"THIS IS IT?"* He was right. Four things to know before touching any of it:
+>
+> - **One row per session and one per sub-agent. NEVER one per tool call.** This is the one objection from
+>   the original refusal that survives, and it is a hard constraint: a session makes hundreds of tool calls
+>   and fifteen projects would be tens of thousands of rows a day into the same table `sync` reads. It is
+>   enforced by the hook MATCHER — `PreToolUse`/`PostToolUse` are scoped to `Task|Agent` — and by a second
+>   check on the tool name inside `cc subagent`. Do not widen either.
+> - **A block on a chart is a claim about a span of time, and the four kinds of claim are drawn
+>   differently.** A running session has no right-hand edge; one that started and was never closed is drawn
+>   to the last thing SEEN rather than to now; a run reconstructed from a transcript is hatched; a run too
+>   short to draw as a bar is a tick and not a minimum-width bar. `lib/timeline.ts` holds all of it and
+>   **R1–R4 in `prove:use` assert the rendered pixels against the rows**.
+> - **`cc backfill` is why the page is not empty.** Hooks only know about sessions that start after they
+>   exist. Claude Code's own transcripts hold the last fortnight, and one command reads them. A transcript
+>   is a CONVERSATION, not a session — one of his spans eleven days — so it is split into stretches at
+>   half-hour gaps, and every row it writes is marked `observed = false`.
+> - **The `@layer desktop` button rule will silently deform anything button-shaped that is not a control.**
+>   `.runblock` is the fourth element to be caught by it and the first where the damage was a false
+>   measurement: every bar rendered 34px tall in a 16px lane and 24px wide minimum. If you add a `button`
+>   that is a shape rather than a control, reset it in that block.
+>
 > **`/agents` and the permission relay shipped 8 August 2026** — `docs/BRIEF-NOTHING-BLOCKED.md`, written up in
 > `docs/ITERATION-LOG.md` §XXIX and §XXX. Three things worth knowing before you touch any of it:
 >

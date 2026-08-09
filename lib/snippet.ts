@@ -238,7 +238,7 @@ believing the channel works and believing it does not. When you do find a note, 
 note that was collected and ignored is worse than one that was never collected, because the hub told him it
 had been picked up.
 
-### Three things he can switch on, and they are OFF unless he asks
+### Four things he can switch on, and they are OFF unless he asks
 
 These are **opt-in per project and off by default**, and nothing below happens unless somebody runs the
 command. A project that runs none of them behaves exactly as this document has described so far. **Do not
@@ -255,14 +255,24 @@ what would change, and \`off\` undoes it.
 node "$HOME/.command-center/cc.mjs" presence on
 \`\`\`
 
-Two hooks — one when a session starts, one when it ends — so the hub can say *"nothing has looked at
-${slug} since 28 Jul"* instead of showing an empty queue that looks identical to a dead agent. It reports
-the project, the git branch and the model. **There is no field for what you are doing, and that is
-deliberate:** an agent asked to describe its own state describes it favourably, and one cheerful status
-would make every other signal on that page worthless.
+Six hooks now, and they do two jobs. Two are the heartbeat — one when a session starts, one when it ends —
+so the hub can say *"nothing has looked at ${slug} since 28 Jul"* instead of showing an empty queue that
+looks identical to a dead agent. They report the project, the git branch and the model. **There is no field
+for what you are doing, and that is deliberate:** an agent asked to describe its own state describes it
+favourably, and one cheerful status would make every other signal on that page worthless.
 
-Without it he still gets a rougher version of the same thing from your syncs, so this is an improvement
-rather than a prerequisite.
+The other four record **one row per sub-agent** — what was spawned, what it was asked to do, how long it
+ran and how it ended — so \`/agents\` can show them nested inside the session that spawned them. They are
+matched to the Task/Agent tool alone, so **an ordinary Read, Edit or Bash call fires nothing**. That
+restriction is the whole reason this is allowed to exist: a session makes hundreds of tool calls, and a hook
+on every one of them would be a firehose into the same database your \`sync\` reads.
+
+Nothing about this changes how you should work. There is no reason to spawn fewer sub-agents, or more, or to
+describe them differently — the \`description\` you already give the Task tool is what he reads, so a useful
+one is worth writing for its own sake.
+
+Without any of it he still gets a rougher version of the presence half from your syncs, so this is an
+improvement rather than a prerequisite.
 
 **2. Can he answer a permission prompt from his phone?**
 
@@ -284,7 +294,23 @@ Three things to know, because they change how you should behave:
 - **Tell him what it means before you switch it on.** Anyone who can open the hub can approve tool calls in
   his sessions from then on. It is a real widening of what that link does.
 
-**3. Where is the money going?**
+**3. Can he see what has already happened, before any of this was installed?**
+
+\`\`\`bash
+node "$HOME/.command-center/cc.mjs" backfill
+\`\`\`
+
+Hooks only know about sessions that start after they exist, so a project wired up this morning has nothing
+to say about last night. This reads Claude Code's own transcripts on this machine and posts the last
+fortnight of activity: every stretch of work, and every sub-agent it can find, with the times the harness
+itself recorded.
+
+**Run it anywhere — it reads the transcript folder, not the current directory** — and it is safe to run
+again. Rows the hub measured for itself always win over a reconstruction of the same session, and the page
+marks reconstructed runs differently from observed ones, because a stretch inferred from where the messages
+stop is a weaker claim than a session something watched begin and end.
+
+**4. Where is the money going?**
 
 \`\`\`bash
 node "$HOME/.command-center/cc.mjs" spend

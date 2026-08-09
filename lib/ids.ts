@@ -27,6 +27,11 @@ export const newNoteId = () => `n${short()}`;
  * tighter than a question's rather than looser. See `encodeApprovalCallback` in lib/telegram.ts.
  */
 export const newApprovalId = () => `p${short()}`;
+/**
+ * One sub-agent. Never travels through Telegram — nothing about a sub-agent needs answering — so the
+ * length is a convention shared with the rest rather than a constraint.
+ */
+export const newSubagentId = () => `s${short()}`;
 
 /** Option keys and idempotency keys must be predictable and URL/callback safe. */
 export const KEY_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;

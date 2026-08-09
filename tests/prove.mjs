@@ -938,10 +938,23 @@ await check('the snippet every project gets covers every agent-facing behaviour'
          *   - that a held call is neither a task nor a question, so `cc ask` is still the way to get a decision
          *   - that `approvals on` widens what a link to the hub can do, which is his call to make
          */
-        ['the three opt-in features being off by default', 'off by default'],
+        ['the opt-in features being off by default', 'off by default'],
         ['how to switch presence on', /cc\.mjs"? presence on/],
         ['how to switch the permission relay on', /cc\.mjs"? approvals on/],
         ['how to post per-project spend', /cc\.mjs"? spend/],
+        /*
+         * The sub-agent rows and the backfill, added the day they shipped rather than the day somebody
+         * noticed. Both change what an agent should expect the hub to know: the first means his page can
+         * show what you spawned, and the second is the only way anything is known about work that ran
+         * before the hooks existed.
+         *
+         * The firehose row is the important one. An agent reading that its sub-agents are recorded could
+         * reasonably conclude that every tool call is, and either work around a cost that is not there or
+         * warn him about a firehose that does not exist. The snippet has to say which.
+         */
+        ['how to fill the page in from what already happened', /cc\.mjs"? backfill/],
+        ['that the sub-agent hooks do not fire on ordinary tool calls', 'fires nothing'],
+        ['that a reconstructed run is a weaker claim than an observed one', 'reconstructed runs'],
         ['that a held tool call falls back to the terminal rather than hanging or aborting',
             'ordinary terminal prompt'],
         ['that a held tool call is neither a task nor a question', 'not a decision and not a task'],

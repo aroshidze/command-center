@@ -329,11 +329,26 @@ export function foldAgents(rows: PresenceRow[], now: number = Date.now()): Agent
 export function sentenceFor(p: ProjectPresence, now: number = Date.now()): string {
     switch (p.state) {
         case 'working':
-            /* Present tense, and it names the agent because "something is working" is worth less than knowing
-             * which. `since` is null when the evidence is a sync rather than an open session, and then the
-             * duration clause is omitted rather than invented — see `stateOf`. */
-            return `${p.agent} is working on ${p.project} now`
-                + (p.since ? `, ${humanSpan(minutesBetween(p.since, now))} in` : '');
+            /*
+             * A SESSION AND A SYNC ARE NOT THE SAME CLAIM, AND THIS SAID "IS WORKING" FOR BOTH.
+             *
+             * `since` is null when the only evidence is a sync — an agent asking the hub what changed, which
+             * takes a second and proves nothing about whether anything is running now. The previous version
+             * omitted the duration clause in that case, correctly, and kept the verb, which was the whole
+             * problem: it dropped the detail it could not support and asserted the claim it could not support.
+             *
+             * The owner found it in seconds. Three syncs run by hand made the page report "claude-code is
+             * working on video-presentations now" for a project where nothing was running, and he said so:
+             * "the presentations one is idle so wtf?". A hub that states something false about its own subject
+             * is worse than one that says nothing, and this is the surface whose entire job is to tell him
+             * whether the silence elsewhere can be trusted.
+             *
+             * So the verb follows the evidence. An open session with a start time is working. A sync is a sync.
+             */
+            return p.since
+                ? `${p.agent} is working on ${p.project} now, ${humanSpan(minutesBetween(p.since, now))} in`
+                : `${p.agent} checked in on ${p.project} `
+                  + `${humanSpan(minutesBetween(p.lastSeenAt!, now))} ago`;
 
         case 'idle':
             /*
@@ -375,11 +390,23 @@ export function sentenceFor(p: ProjectPresence, now: number = Date.now()): strin
  * the same rule the stale-sync banner and `unseenWork` already follow.
  */
 export function summaryLine(list: ProjectPresence[]): string | null {
-    const working = list.filter(p => p.state === 'working').length;
+    /*
+     * "BEING WORKED ON" MEANS A SESSION, NOT A SYNC — the same distinction `sentenceFor` gets wrong above if
+     * you let it. A row in the `working` state with no `since` is an agent that asked the hub what changed,
+     * which is evidence of contact and not of work. Counting those as "being worked on" made this line read
+     * "3 being worked on now" while nothing at all was running.
+     *
+     * Split rather than merged, because both facts are worth having and neither is the other: what is running,
+     * and what has been in touch. A single number covering both is the kind of summary that is never wrong
+     * enough to notice and never right enough to trust.
+     */
+    const running = list.filter(p => p.state === 'working' && p.since).length;
+    const inTouch = list.filter(p => p.state === 'working' && !p.since).length;
     const quiet = list.filter(p => p.state === 'quiet').length;
-    if (!working && !quiet) return null;
+    if (!running && !inTouch && !quiet) return null;
     const bits: string[] = [];
-    if (working) bits.push(`${working} being worked on now`);
+    if (running) bits.push(`${running} being worked on now`);
+    if (inTouch) bits.push(`${inTouch} checked in recently`);
     if (quiet) bits.push(`${quiet} with nothing looking at ${quiet === 1 ? 'it' : 'them'}`);
     return bits.join(' · ');
 }

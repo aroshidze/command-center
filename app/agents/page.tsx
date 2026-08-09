@@ -11,8 +11,10 @@ import {
 import { costOf, humanDollars } from '../../lib/prices';
 import { agentsView, board, SPEND_ELSEWHERE } from '../../lib/store';
 import { humanAgo, humanCount } from '../../lib/format';
+import { buildTimeline } from '../../lib/timeline';
 import Nav from '../components/Nav';
 import Presence from '../components/Presence';
+import Runs from '../components/Runs';
 import CopyBlock from '../components/CopyBlock';
 
 export const dynamic = 'force-dynamic';
@@ -105,8 +107,49 @@ export default async function AgentsPage() {
      * every other figure. Same reasoning as `MEASURE` in tests/measure-layout.mjs being one evaluate.
      */
     const now = Date.now();
-    const projectPresence = foldProjects(view.projects.map(p => p.slug), view.presence, now);
+
+    /*
+     * ==================================================================================================
+     * WHICH PROJECTS EARN A LINE — and the owner found this one in about five seconds.
+     * ==================================================================================================
+     *
+     * His words: *"`thecommandcenter` and `command-center` are two rows for one project."* They are, and
+     * the two arrive by different doors. `projects()` folds over the EVENT LOG, so any slug an agent ever
+     * filed anything under is on that list forever; `foldProjects` unions that with every slug in
+     * `presence`, which is where the folder-name inference lands. One project onboarded under a chosen
+     * slug and later heartbeating under its folder name is two rows, permanently, and neither is wrong.
+     *
+     * THE FIX IS NOT AN ALIAS TABLE. Deciding that two slugs are one project is a judgement no row
+     * supports, and a mapping he would have to maintain is precisely the kind of field
+     * docs/RESEARCH.md §7 refuses. What the rows DO support is whether the hub has anything to say about
+     * a slug at all — so the rule is that a project earns a line when there is something current about
+     * it: an observation of any kind, any measured spend, or work still open.
+     *
+     * A slug with none of those is a name in the log and nothing else, and it is dropped. That removes
+     * his duplicate without inventing a relationship, and it generalises: the next abandoned slug does
+     * not need a second fix.
+     *
+     * QUIET PROJECTS ARE NOT AFFECTED, which is the thing to check before believing this is safe. A
+     * quiet project is one that HAS presence rows and none of them are recent — the entire point of this
+     * page — so it passes the first test. What is dropped is the case with no presence at all, no spend
+     * at all and nothing open.
+     */
+    const spendBySlug = new Set(view.spend.filter(r => r.samples > 0).map(r => r.project));
+    const seenInPresence = new Set(view.presence.map(r => r.project));
+    const worthALine = view.projects
+        .filter(p => seenInPresence.has(p.slug) || spendBySlug.has(p.slug)
+            || p.open_tasks > 0 || p.open_questions > 0)
+        .map(p => p.slug);
+    const dropped = view.projects.length - worthALine.length;
+
+    const projectPresence = foldProjects(worthALine, view.presence, now);
     const agentPresence = foldAgents(view.presence, now);
+    /*
+     * THE CHART. Built on the server for the same reason the sentences are: one place makes a claim
+     * about time, so one place can be checked — and `buildTimeline` imports nothing but types, so a
+     * check can load it and assert the arithmetic without a browser.
+     */
+    const runs = buildTimeline(view.sessions, view.subagents, now);
     const sentences = Object.fromEntries(
         projectPresence.map(p => [p.project, sentenceFor(p, now)]),
     );
@@ -146,6 +189,9 @@ export default async function AgentsPage() {
     const nothingKnown = projectPresence.length === 0;
 
     const hookCommand = 'node "$HOME/.command-center/cc.mjs" presence on';
+    /* Runs anywhere — it reads the transcript folder rather than the current directory, so unlike every
+     * other command on this page it is not a "in the project folder" instruction. */
+    const backfillCommand = 'node "$HOME/.command-center/cc.mjs" backfill';
 
     return (
         <>
@@ -157,7 +203,14 @@ export default async function AgentsPage() {
                     <div className="top">
                         <h1>Your agents</h1>
                     </div>
-                    <div className="summary" data-measure="summary">
+                    {/*
+                      * `data-dropped` is how many slugs the event log carries that nothing current is
+                      * known about. It is not on screen — he asked for those lines to go away, and a
+                      * line saying "3 slugs were hidden" is the noise he was complaining about — but it
+                      * is not silent either, because a check can read it and this codebase's rule is
+                      * that a cap nobody can see is a cap that eventually hides something real.
+                      */}
+                    <div className="summary" data-measure="summary" data-dropped={dropped}>
                         {/*
                           * The summary, or the count, or nothing at all.
                           *
@@ -202,12 +255,45 @@ export default async function AgentsPage() {
                 {nothingKnown ? (
                     <div className="empty unstarted" data-measure="agents-empty" data-empty="unstarted">
                         <b>Nothing has reported in yet.</b>
-                        This page answers one question: is anything actually working, and when did it last
-                        run? It fills in on its own as your agents sync — and the two hooks below make it
-                        exact. Until then there is nothing to show, which is different from nothing happening.
+                        {/*
+                          * ONE ACTION, NAMED, AND IT FILLS THE PAGE WITHOUT WAITING FOR ANYTHING TO RUN.
+                          *
+                          * The old version of this card described what the page would eventually become
+                          * and left him with nothing to do about it — which is how `/agents` shipped as
+                          * five rows reading "Nothing has ever reported in" and stayed that way, because
+                          * hooks only take effect on the NEXT session and most of his folders had never
+                          * been connected at all. `cc backfill` reads Claude Code's own transcripts and
+                          * fills this in from history, so the first thing he sees is his own fortnight
+                          * rather than a promise about tomorrow.
+                          */}
+                        This page answers two questions: what actually ran, and whether the quiet
+                        elsewhere is real. Both are filled in by agents reporting in — and the last two
+                        weeks are already on your machine, in Claude Code&rsquo;s own transcripts. One
+                        command reads them and posts them here.
+                        <CopyBlock text={backfillCommand} label="anywhere, once" />
+                        After that, <code>cc presence on</code> in a project folder keeps it exact from
+                        then on. Until either happens there is nothing to show, which is different from
+                        nothing happening.
                     </div>
                 ) : (
                     <>
+                        {/*
+                          * THE CHART FIRST, AND THE LIST UNDER IT — which is a reordering of the whole
+                          * page rather than an addition to it.
+                          *
+                          * What shipped was five one-line rows and a dollar figure, and he opened it and
+                          * said *"THIS IS IT? look at all of the features of our rivals — projects,
+                          * workers, agents, sub agents, beautiful layouts, maps"*. The list answers "is
+                          * the silence real", which is a real question and the only actionable thing
+                          * here, and it is not the question he opens this page with. That one is "what
+                          * happened", and it is answered by a shape rather than by five sentences.
+                          *
+                          * So the chart is the centre and the list keeps its job directly beneath it.
+                          * Rendered only when something ran: a chart of nothing is the 660px-void empty
+                          * state §XXVIII removed from the palette, redrawn larger.
+                          */}
+                        {runs.total > 0 && <Runs view={runs} now={now} />}
+
                         <Presence
                             projects={projectPresence}
                             sentences={sentences}
@@ -257,18 +343,37 @@ export default async function AgentsPage() {
                           * still worth showing: it is the only measure of how much work the agents have
                           * actually done.
                           */}
-                        <h2>If you paid per token</h2>
-                        <div className="card">
-                            <p className="why" style={{ marginTop: 0 }} data-measure="spend-total">
-                                This work would have cost <b>{humanDollars(wholeCost.dollars)}</b> across{' '}
-                                {humanCount(samples)} recorded exchange{samples === 1 ? '' : 's'}
-                                {measuredAt ? `, last measured ${humanAgo(measuredAt)}` : ''}.{' '}
-                                <b>You were not charged this.</b>
-                            </p>
-                            <p className="why" data-measure="spend-caveat">
-                                At API list prices, from Claude Code&rsquo;s own usage records. On a
-                                subscription you pay a flat fee, so this is what the same work would have cost
-                                through the API — the figure that tells you where the allowance goes, not a bill.
+                        {/*
+                          * DEMOTED FROM A SECTION TO A FOOTNOTE, and the owner is the one who said so.
+                          *
+                          * It had an `h2` and a bold figure inside a card, which made it the most prominent thing
+                          * on a page whose subject is who is working. He opened it and said: "there is nothing,
+                          * only the number $ that would be spent in tokens. That is a very low tier information,
+                          * could be shown not so significantly."
+                          *
+                          * He is right, and the reason is worth stating rather than just obeying: NO HUMAN ACTION
+                          * FOLLOWS FROM THIS NUMBER. He cannot spend less by looking at it, and he is not billed
+                          * for it. It is the one figure on the page that is context rather than a prompt, so
+                          * `docs/RESEARCH.md` §14 — "if clicking it does nothing, it does not go on the page" —
+                          * applies to it more than to anything else here. It survives as a footnote because it is
+                          * the only measure of how much work the agents have actually done, which is worth
+                          * knowing once and never worth a heading.
+                          *
+                          * The per-project figures stay on their rows: attached to a project, a cost is at least
+                          * about something. Detached and totalled, it was just a big number.
+                          */}
+                        {/* `.presnote` is the quiet footnote style this page already uses for the
+                          * what-counts-as-working line — mute, one step down the type scale. Reused rather than
+                          * given a class of its own, so the two footnotes read as the same kind of remark and no
+                          * new colour or size enters the system. */}
+                        <div className="presnote" data-measure="spend-total">
+                            <p style={{ marginTop: 0 }}>
+                                If you paid per token this work would have cost{' '}
+                                <b>{humanDollars(wholeCost.dollars)}</b> across {humanCount(samples)} recorded
+                                exchange{samples === 1 ? '' : 's'}
+                                {measuredAt ? `, last measured ${humanAgo(measuredAt)}` : ''} —{' '}
+                                <b>you were not charged this</b>, it is what the same work would have cost through
+                                the API at list prices rather than on a subscription.
                             </p>
                             {elsewhereCost > 0 && (
                                 /*
@@ -277,7 +382,7 @@ export default async function AgentsPage() {
                                  * scratch folder into whichever slug happened to be nearby would make the
                                  * per-project figures wrong in a way nothing on the page could reveal.
                                  */
-                                <p className="why" data-measure="spend-elsewhere">
+                                <p data-measure="spend-elsewhere">
                                     <b>{humanDollars(elsewhereCost)}</b> of that was spent in folders that are
                                     not projects the hub knows about. Onboard one and it moves to its own line.
                                 </p>
@@ -288,7 +393,7 @@ export default async function AgentsPage() {
                                  * because the two alternatives are both untruths: pricing it at zero understates
                                  * silently, and pricing it as Opus overstates a Haiku run fivefold.
                                  */
-                                <p className="why" data-measure="spend-unpriced">
+                                <p data-measure="spend-unpriced">
                                     Not counted: {wholeCost.unpriced.join(', ')} — no published price is
                                     compiled in, so those tokens are left out rather than guessed at.
                                 </p>

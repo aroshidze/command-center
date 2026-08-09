@@ -1,5 +1,7 @@
 import { ensureSchema, sql, writeVerified, WriteFailed } from './db';
-import { newApprovalId, newNoteId, newQuestionId, newTaskId, KEY_RE, OPTION_KEY_RE } from './ids';
+import {
+    newApprovalId, newNoteId, newQuestionId, newSubagentId, newTaskId, KEY_RE, OPTION_KEY_RE,
+} from './ids';
 import type { PresenceRow } from './presence';
 import { MIN_GAP_MINUTES, nudgeStanding } from './reminders';
 import { sanitiseForDisplay, sanitiseToolName } from './sanitise';
@@ -1571,6 +1573,585 @@ export async function presenceRows(): Promise<PresenceRow[]> {
 }
 
 /* ================================================================================================
+ * SESSIONS AND SUB-AGENTS — the rows the timeline is drawn from
+ *
+ * `presenceRows()` above answers "what is the state of each project right now" and does it with
+ * `distinct on (project, agent)`, which is one row per pair and cannot grow with time. The timeline
+ * asks a different question — what ran last night — and needs MANY sessions. So it gets its own read,
+ * and that read is bounded by time and by a row cap rather than by nothing, which is the whole lesson
+ * of §XXVI written into the query instead of into a comment.
+ * ============================================================================================== */
+
+/**
+ * How far back the timeline is ever willing to look. Fourteen days.
+ *
+ * The window the page actually draws is usually 24 hours (see `lib/timeline.ts`); this is the ceiling
+ * on what is fetched so that a hub which has been quiet for a month still has something to show. Past
+ * a fortnight, "what ran" stops being a thing anybody acts on and becomes history, and history has a
+ * page of its own.
+ */
+export const TIMELINE_DAYS = 14;
+
+/**
+ * And the row cap, which is the half that survives at two years of volume.
+ *
+ * A fortnight of his measured rate is a few hundred sessions; the cap is what stops a pathological
+ * fortnight — a script in a loop opening sessions — from putting ten thousand rows on the wire. It is
+ * applied newest-first, and the page is told when it bit rather than silently drawing a subset.
+ */
+export const TIMELINE_MAX_SESSIONS = 400;
+export const TIMELINE_MAX_SUBAGENTS = 800;
+
+export interface SessionRow {
+    project: string;
+    agent: string;
+    session: string;
+    started_at: string;
+    last_seen_at: string;
+    ended_at: string | null;
+    end_reason: string | null;
+    branch: string | null;
+    model: string | null;
+    /** False when this row was reconstructed from a transcript rather than reported by a hook. */
+    observed: boolean;
+}
+
+export interface SubagentRow {
+    id: string;
+    project: string;
+    agent: string;
+    session: string;
+    type: string;
+    task: string | null;
+    model: string | null;
+    started_at: string;
+    start_seen: boolean;
+    ended_at: string | null;
+    outcome: string | null;
+    tool_calls: number | null;
+    edits: number | null;
+    lines_added: number | null;
+    lines_removed: number | null;
+    /** False when this row was reconstructed from a transcript rather than reported by a hook. */
+    observed: boolean;
+}
+
+export interface SubagentInput {
+    project: unknown;
+    session: unknown;
+    tool_use_id?: unknown;
+    agent_id?: unknown;
+    type?: unknown;
+    task?: unknown;
+    model?: unknown;
+    /** The PARENT session's model, sent so a running session's row can be filled in. Never overwrites. */
+    session_model?: unknown;
+    /** Set by the closing hooks. Its presence is what ends the row. */
+    ended?: unknown;
+    outcome?: unknown;
+    tool_calls?: unknown;
+    edits?: unknown;
+    lines_added?: unknown;
+    lines_removed?: unknown;
+}
+
+/** A harness id — bounded and stripped, because it lands in a unique index and in nothing else. */
+function harnessId(v: unknown, field: string): string | null {
+    if (v == null || v === '') return null;
+    const s = str(v, field, 120, true)!.replace(/[^A-Za-z0-9._:-]/g, '');
+    return s || null;
+}
+
+/**
+ * A count the harness reported, or null when it reported nothing.
+ *
+ * NULL AND NOT ZERO, which is the whole reason this is not `count` further down the file. That one
+ * throws on a bad value and returns 0 for a missing one, which is right for token totals and wrong here:
+ * a sub-agent that edited no files and a sub-agent whose harness did not say are different facts, and
+ * the page renders them differently. Zero would quietly turn "unknown" into "nothing happened".
+ */
+function reported(v: unknown): number | null {
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 2_000_000_000) : null;
+}
+
+/**
+ * The four words a sub-agent's ending is allowed to be, and why there are four rather than two.
+ *
+ * The synchronous path reports the harness's own `status`, which is `completed` when it worked. The
+ * background path is closed by `SubagentStop`, which fires whether the work went well or badly and says
+ * nothing about which — so it earns `ended`, a word that claims the fact observed (it stopped) and not
+ * the one that was not (it succeeded). Getting this wrong is the same overclaim as reporting an agent
+ * as working on the evidence of one sync, which is the defect the owner found in seconds.
+ */
+function outcomeWord(v: unknown): string | null {
+    if (v == null || v === '') return null;
+    const s = String(v).toLowerCase();
+    if (s === 'completed' || s === 'success' || s === 'succeeded') return 'completed';
+    if (s.includes('error') || s.includes('fail') || s.includes('reject')) return 'failed';
+    if (s.includes('cancel') || s.includes('abort') || s.includes('interrupt')) return 'failed';
+    return 'ended';
+}
+
+/**
+ * ONE SUB-AGENT, opened or closed. One function for both moments, exactly as `heartbeat` is.
+ *
+ * ==================================================================================================
+ * WHY AN UPSERT AND NOT AN INSERT PLUS AN UPDATE
+ * ==================================================================================================
+ *
+ * There are three hook events that can reach this and they do not arrive in a guaranteed order or at
+ * all: `PreToolUse` opens, `PostToolUse` closes a synchronous sub-agent or records the background one's
+ * `agent_id`, and `SubagentStop` closes a backgrounded one. Any of the three can be the FIRST to arrive
+ * — the hooks are installed mid-session, a laptop is offline for one call, a spawn is denied at the
+ * permission prompt. An UPDATE that silently matched nothing would leave a sub-agent that ran and
+ * finished invisible, which is the same class of silence as a session that stays open forever.
+ *
+ * So whichever arrives first creates the row, and a row created by a CLOSING event is marked
+ * `start_seen = false`. That flag is not bookkeeping: it is the difference between a block the timeline
+ * may draw as a measured span and one it must draw as a moment it heard about.
+ *
+ * ==================================================================================================
+ * MATCHED ON `tool_use_id` FIRST AND `agent_id` SECOND
+ * ==================================================================================================
+ *
+ * `tool_use_id` identifies the spawning call and is on both `PreToolUse` and `PostToolUse`.
+ * `SubagentStop` carries neither the tool_use_id nor anything else that would join to it — only
+ * `agent_id` — which is why `PostToolUse` recording `agent_id` on the way past is load-bearing rather
+ * than decorative. Without it a backgrounded sub-agent could never be closed.
+ */
+export async function recordSubagent(
+    input: SubagentInput, agent: string,
+): Promise<{ id: string; project: string; ended: boolean; created: boolean }> {
+    await ensureSchema();
+    const proj = project(input.project);
+    const session = sessionId(input.session);
+    const toolUseId = harnessId(input.tool_use_id, 'tool_use_id');
+    const agentId = harnessId(input.agent_id, 'agent_id');
+    if (!toolUseId && !agentId) {
+        throw new Invalid('a sub-agent needs a tool_use_id or an agent_id — without one of them a '
+            + 'later hook could not find this row and it would never be closed');
+    }
+
+    /*
+     * BOTH SANITISED ON THE WAY IN, and the type as well as the task. A sub-agent's type is
+     * project-defined — `.claude/agents/*.md` names it — so it is as attacker-supplied as a branch name
+     * the moment somebody opens a pull request against a repository with an agent definition in it.
+     */
+    const type = sanitiseToolName(input.type == null || input.type === '' ? 'sub-agent' : input.type);
+    const task = input.task == null || input.task === ''
+        ? null : sanitiseForDisplay(input.task, 120, '(no description given)').text;
+    const model = input.model == null || input.model === ''
+        ? null : sanitiseToolName(input.model);
+    /* The PARENT session's model, which is a different fact from the sub-agent's own — a sub-agent can be
+     * resolved to a cheaper model than the session that spawned it, and on this machine routinely is. */
+    const sessionModel = input.session_model == null || input.session_model === ''
+        ? null : sanitiseToolName(input.session_model);
+    const ending = input.ended === true || input.ended === 'true';
+    const outcome = ending ? (outcomeWord(input.outcome) ?? 'ended') : null;
+
+    /*
+     * ==================================================================================================
+     * FINDING THE ROW THIS EVENT BELONGS TO, and the fallback is not a nicety — without it one sub-agent
+     * becomes two, which is the defect the owner found on the project list wearing different clothes.
+     * ==================================================================================================
+     *
+     * The exact keys first: `tool_use_id`, which `PreToolUse` and `PostToolUse` both carry, then
+     * `agent_id`, which `SubagentStop` carries and nothing else does.
+     *
+     * MEASURED, AND IT IS WHY THE FALLBACK EXISTS: on the SYNCHRONOUS path `SubagentStop` fires about
+     * 126 ms BEFORE `PostToolUse`. So at the moment the sub-agent stops, no row carries its `agent_id`
+     * yet — `PostToolUse`, the only event that could have written it, has not run. Exact matching alone
+     * therefore opened a SECOND row at every synchronous completion and left the first one running
+     * forever. Both were visible in the database after one real session, which is the only reason this
+     * was found: the suite was green and the shapes were wrong.
+     *
+     * THE FALLBACK, AND WHY IT CANNOT MISATTRIBUTE. When a close arrives with no matching row, it is
+     * paired with the oldest OPEN sub-agent of the same type in the same session. The obvious hazard is
+     * two sub-agents of one type running at once and their ends being swapped — and that cannot happen
+     * here, because the fallback is only ever reached on the synchronous path, where the parent is
+     * blocked inside the tool call and exactly one sub-agent is running. A BACKGROUNDED sub-agent has
+     * had its `agent_id` recorded by `PostToolUse` a tenth of a second after it started, so it always
+     * matches exactly and never reaches this.
+     */
+    let existing = await sql()`
+        select * from subagents
+         where project = ${proj}
+           and ((${toolUseId}::text is not null and tool_use_id = ${toolUseId})
+             or (${agentId}::text is not null and agent_id = ${agentId}))
+         order by case when tool_use_id = ${toolUseId} then 0 else 1 end, started_at desc
+         limit 1
+    ` as Row[];
+
+    if (!existing[0] && ending) {
+        existing = await sql()`
+            select * from subagents
+             where project = ${proj} and session = ${session} and type = ${type}
+               and ended_at is null and agent_id is null
+             order by started_at asc
+             limit 1
+        ` as Row[];
+    }
+
+    const id = existing[0] ? String(existing[0].id) : newSubagentId();
+    const created = !existing[0];
+
+    const row = await writeVerified<Row>({
+        what: ending
+            ? `record that a ${type} sub-agent finished in ${proj}`
+            : `record a ${type} sub-agent in ${proj}`,
+        write: () => (created
+            ? sql()`
+                insert into subagents (id, project, agent, session, tool_use_id, agent_id, type, task,
+                                       model, start_seen, ended_at, outcome, tool_calls, edits,
+                                       lines_added, lines_removed)
+                values (${id}, ${proj}, ${agent}, ${session}, ${toolUseId}, ${agentId}, ${type},
+                        ${task}, ${model}, ${!ending},
+                        /* A CASE expression and not a parameter holding the string "now()", which is
+                           what the obvious version does: a tagged template turns every hole into a value,
+                           so that spelling asks Postgres to cast the six characters n-o-w-(-) to a
+                           timestamp and it refuses. The clock must stay the DATABASE's — a timestamp
+                           taken on the machine that ran the hook would put a session's blocks on a
+                           different axis from the one the page draws. */
+                        case when ${ending} then now() else null end, ${outcome},
+                        ${reported(input.tool_calls)}, ${reported(input.edits)},
+                        ${reported(input.lines_added)}, ${reported(input.lines_removed)})
+                returning *
+              `
+            : sql()`
+                update subagents
+                   set agent_id      = coalesce(${agentId}, agent_id),
+                       tool_use_id   = coalesce(${toolUseId}, tool_use_id),
+                       task          = coalesce(${task}, task),
+                       model         = coalesce(${model}, model),
+                       /* Never re-opens. A close is terminal: the second closing hook of a pair — and
+                          both fire on the synchronous path — must not blank an end that is already
+                          recorded, or the row would flicker between finished and running. */
+                       ended_at      = coalesce(ended_at,
+                                                case when ${ending} then now() else null end),
+                       /* AN OUTCOME MAY BE SHARPENED AND NEVER BLUNTED, and a plain coalesce got this
+                          wrong in a way only real sessions showed. SubagentStop fires about 126 ms
+                          BEFORE PostToolUse even on the synchronous path, so first-writer-wins recorded
+                          every completed sub-agent as the vaguer "ended" and threw the harness's own
+                          "completed" away. The rule is: nothing overwrites a word that already says
+                          more than "it stopped". */
+                       outcome       = case
+                                         when outcome is null or outcome = 'ended'
+                                           then coalesce(${outcome}, outcome)
+                                         else outcome
+                                       end,
+                       tool_calls    = coalesce(${reported(input.tool_calls)}, tool_calls),
+                       edits         = coalesce(${reported(input.edits)}, edits),
+                       lines_added   = coalesce(${reported(input.lines_added)}, lines_added),
+                       lines_removed = coalesce(${reported(input.lines_removed)}, lines_removed)
+                 where id = ${id}
+                returning *
+              `) as Promise<Row[]>,
+        reread: () => sql()`select * from subagents where id = ${id}` as Promise<Row[]>,
+        expect: r => {
+            if (String(r.id) !== id) return `id is "${String(r.id)}"`;
+            if (String(r.project) !== proj) return `project is "${String(r.project)}"`;
+            if (ending && r.ended_at == null) {
+                return 'the sub-agent was reported as finished but ended_at is empty';
+            }
+            return null;
+        },
+    });
+
+    /*
+     * A SPAWN IS EVIDENCE THE PARENT SESSION IS ALIVE, and using it is free.
+     *
+     * `SessionStart` and `SessionEnd` are the only two heartbeats, which is why the live window has to
+     * be forty-five minutes wide (see LIVE_MINUTES). A sub-agent spawning is a second, independent
+     * observation that the session existed at that instant, and it costs nothing to record because the
+     * request is already here.
+     *
+     * UPDATE AND NEVER INSERT. If no session row exists the right answer is silence: inventing one
+     * would give it a `started_at` of now, which is not when the session started, and a session block
+     * drawn from a start nobody observed is precisely the claim this whole page must not make.
+     */
+    try {
+        await sql()`
+            update presence
+               set last_seen_at = now(),
+                   /* COALESCE, so the heartbeat's answer always wins over this one. Two observers of one
+                      fact is fine; two writers racing to overwrite it is not, and the heartbeat is the
+                      one whose whole job this is. */
+                   model = coalesce(model, ${sessionModel})
+             where project = ${proj} and agent = ${agent} and session = ${session}
+               and kind = 'session'
+        `;
+    } catch (e) {
+        /* Logged rather than swallowed, and never allowed to fail the write above: the sub-agent row is
+         * the thing this request exists to record, and losing a decoration on the parent's freshness
+         * costs a slightly stale line. Same call as `notePresenceFromSync`. */
+        console.error('[subagent] could not touch the parent session row:',
+            e instanceof Error ? e.message : e);
+    }
+
+    return { id, project: proj, ended: row.ended_at != null, created };
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * BACKFILL — the last fortnight, reconstructed from the transcripts the harness already wrote
+ *
+ * WHY THIS EXISTS AND WHY IT IS NOT CHEATING. A hook knows nothing about the sessions that ran before
+ * it was installed, so the honest state of a freshly wired hub is an empty page — which is exactly the
+ * failure this feature already shipped once, in the form of five rows reading "Nothing has ever
+ * reported in". Claude Code writes a complete transcript of every session to disk, with timestamps, the
+ * working directory, the branch and the model on every message. Reading it is the same act as
+ * `cc spend` reading the usage records, and it is legitimate for the same reason
+ * docs/BRIEF-NOTHING-BLOCKED.md §1 gives: what is local-only is PULLING, and the collector is local.
+ *
+ * WHAT MAKES IT HONEST RATHER THAN INVENTED, because a reconstructed block is still a claim about a
+ * span of time:
+ *
+ *  - Every timestamp comes from a message the harness wrote. Nothing is estimated or rounded outward.
+ *  - A transcript is a CONVERSATION and not a session — one of his runs for eleven days across a dozen
+ *    sittings — so a file is split into stretches of activity at gaps of thirty minutes or more, and a
+ *    stretch is what gets a row. The alternative was an eleven-day bar, which would be false about
+ *    almost every hour it covered.
+ *  - Every row is written with `observed = false`, and the page draws those differently and says so.
+ *  - This route is the ONLY writer allowed to supply its own timestamps. Everywhere else the clock is
+ *    the database's. That is why it is a separate route rather than a flag on `heartbeat`: the ability
+ *    to state when something happened and the obligation to mark it as reconstructed are the same
+ *    grant, and separating them would eventually let an ordinary write claim a time it did not observe.
+ * ---------------------------------------------------------------------------------------------- */
+
+export interface BackfillSession {
+    project: unknown;
+    session: unknown;
+    started_at: unknown;
+    ended_at: unknown;
+    branch?: unknown;
+    model?: unknown;
+}
+
+export interface BackfillSubagent {
+    project: unknown;
+    session: unknown;
+    agent_id: unknown;
+    type?: unknown;
+    task?: unknown;
+    model?: unknown;
+    started_at: unknown;
+    ended_at: unknown;
+}
+
+/** A timestamp supplied by the caller — parsed, bounded, and never in the future. */
+function pastInstant(v: unknown, field: string): Date {
+    const t = v == null ? NaN : new Date(String(v)).getTime();
+    if (!Number.isFinite(t)) throw new Invalid(`${field} is not a timestamp`);
+    /* A reconstructed row that claims to be in the future would render as a block to the right of now,
+     * which is the one direction a timeline cannot mean anything in. Clamped rather than refused,
+     * because a machine whose clock is a minute fast should not lose its whole history over it. */
+    return new Date(Math.min(t, Date.now()));
+}
+
+/**
+ * Write reconstructed activity. Returns what was written and what was left alone.
+ *
+ * NEVER OVERWRITES AN OBSERVED ROW. `where presence.observed = false` on the conflict path is what
+ * guarantees that a hook's own record of a session always beats a reconstruction of the same session,
+ * however many times this is run. Without it, running `cc backfill` after a good day of live capture
+ * would replace measured spans with inferred ones and nothing would say so.
+ */
+export async function backfillActivity(
+    sessions: BackfillSession[], subagents: BackfillSubagent[], agent: string,
+): Promise<{ sessions: number; subagents: number; kept: number }> {
+    await ensureSchema();
+
+    /*
+     * ONE STATEMENT PER TABLE, VIA `unnest`, AND THE FIRST VERSION OF THIS WAS UNUSABLE.
+     *
+     * A row at a time is a round trip at a time over the HTTP driver, and 271 stretches — one real
+     * fortnight of his own history — took longer than the CLI's twenty-second timeout. It failed as
+     * "could not reach the hub", which is the message for a hub that is down, about a hub that was
+     * answering perfectly and simply had four hundred sequential inserts to do.
+     *
+     * Six parallel arrays through `unnest` make it two statements whatever the volume, and the
+     * validation stays exactly where it was: every value is still put through `project`, `sessionId`
+     * and the sanitisers before it reaches an array, because a bulk path that skips the boundary is how
+     * a boundary stops meaning anything.
+     */
+    const rowsIn = sessions.slice(0, TIMELINE_MAX_SESSIONS).map(s => ({
+        project: project(s.project),
+        session: sessionId(s.session),
+        started_at: pastInstant(s.started_at, 'started_at').toISOString(),
+        ended_at: pastInstant(s.ended_at, 'ended_at').toISOString(),
+        branch: s.branch == null || s.branch === ''
+            ? null : sanitiseForDisplay(s.branch, 60, '(unnamed branch)').text,
+        model: s.model == null || s.model === '' ? null : sanitiseToolName(s.model),
+    }));
+
+    let wroteSessions = 0;
+    if (rowsIn.length) {
+        const written = await sql()`
+            insert into presence (project, agent, session, kind, started_at, last_seen_at, ended_at,
+                                  branch, model, observed)
+            select t.p, ${agent}, t.s, 'session', t.st, t.en, t.en, t.br, t.mo, false
+              from unnest(${rowsIn.map(r => r.project)}::text[],
+                          ${rowsIn.map(r => r.session)}::text[],
+                          ${rowsIn.map(r => r.started_at)}::timestamptz[],
+                          ${rowsIn.map(r => r.ended_at)}::timestamptz[],
+                          ${rowsIn.map(r => r.branch)}::text[],
+                          ${rowsIn.map(r => r.model)}::text[]) as t(p, s, st, en, br, mo)
+            on conflict (project, agent, session) do update
+                set started_at = excluded.started_at, last_seen_at = excluded.last_seen_at,
+                    ended_at = excluded.ended_at, branch = excluded.branch, model = excluded.model
+              where presence.observed = false
+            returning session
+        ` as Row[];
+        wroteSessions = written.length;
+    }
+
+    const subsIn = subagents.slice(0, TIMELINE_MAX_SUBAGENTS)
+        .map(a => ({
+            id: newSubagentId(),
+            project: project(a.project),
+            session: sessionId(a.session),
+            agent_id: harnessId(a.agent_id, 'agent_id'),
+            type: sanitiseToolName(a.type == null || a.type === '' ? 'sub-agent' : a.type),
+            task: a.task == null || a.task === ''
+                ? null : sanitiseForDisplay(a.task, 120, '(no description given)').text,
+            model: a.model == null || a.model === '' ? null : sanitiseToolName(a.model),
+            started_at: pastInstant(a.started_at, 'started_at').toISOString(),
+            ended_at: pastInstant(a.ended_at, 'ended_at').toISOString(),
+        }))
+        .filter(a => a.agent_id);
+
+    let wroteSubagents = 0;
+    if (subsIn.length) {
+        const written = await sql()`
+            insert into subagents (id, project, agent, session, agent_id, type, task, model,
+                                   started_at, start_seen, ended_at, outcome, observed)
+            select t.i, t.p, ${agent}, t.s, t.a, t.ty, t.ta, t.mo, t.st, true, t.en, 'ended', false
+              from unnest(${subsIn.map(r => r.id)}::text[],
+                          ${subsIn.map(r => r.project)}::text[],
+                          ${subsIn.map(r => r.session)}::text[],
+                          ${subsIn.map(r => r.agent_id)}::text[],
+                          ${subsIn.map(r => r.type)}::text[],
+                          ${subsIn.map(r => r.task)}::text[],
+                          ${subsIn.map(r => r.model)}::text[],
+                          ${subsIn.map(r => r.started_at)}::timestamptz[],
+                          ${subsIn.map(r => r.ended_at)}::timestamptz[])
+                   as t(i, p, s, a, ty, ta, mo, st, en)
+            /* The index is PARTIAL, so its predicate has to be repeated here or Postgres cannot match
+               it: "there is no unique or exclusion constraint matching the ON CONFLICT specification"
+               is what a partial index looks like from this end. */
+            on conflict (project, agent_id) where agent_id is not null do update
+                set session = excluded.session, started_at = excluded.started_at,
+                    ended_at = excluded.ended_at, task = excluded.task, model = excluded.model
+              where subagents.observed = false
+            returning id
+        ` as Row[];
+        wroteSubagents = written.length;
+    }
+
+    return {
+        sessions: wroteSessions,
+        subagents: wroteSubagents,
+        kept: rowsIn.length - wroteSessions,
+    };
+}
+
+/**
+ * The session ids the hub has ALREADY seen with its own hooks, so a backfill can leave them alone.
+ *
+ * Handed to the caller rather than enforced only here, because the expensive half is on the caller's
+ * side: reading and splitting a fifty-megabyte transcript to produce rows the hub is going to refuse is
+ * work nobody needs done. The refusal above stays anyway — a client that ignores this list must still
+ * not be able to overwrite a measurement.
+ */
+export async function observedSessions(days = TIMELINE_DAYS): Promise<string[]> {
+    await ensureSchema();
+    const rows = await sql()`
+        select distinct session from presence
+         where kind = 'session' and observed = true
+           and greatest(last_seen_at, coalesce(ended_at, last_seen_at))
+               > now() - (${days} * interval '1 day')
+         limit 2000
+    ` as Row[];
+    return rows.map(r => String(r.session));
+}
+
+/**
+ * The sessions the timeline draws, newest first, bounded twice.
+ *
+ * `kind = 'session'` only. A sync row is one row per (project, agent) that gets its `last_seen_at`
+ * bumped forever, so it has no span at all — drawing it as a block would be inventing a duration for
+ * something that took a few milliseconds and happened many times. Syncs stay where they already work,
+ * which is the per-project sentence above the chart.
+ */
+export async function sessionWindow(days = TIMELINE_DAYS): Promise<SessionRow[]> {
+    await ensureSchema();
+    const rows = await sql()`
+        select project, agent, session, started_at, last_seen_at, ended_at, end_reason, branch, model,
+               /* THIS COLUMN IS LOAD-BEARING AND IT WAS MISSING FROM THIS LIST. The mapper tests it
+                  against false, so an absent column came back undefined and every one of 269
+                  reconstructed spans was drawn as a session a hook had watched from start to finish.
+                  Nothing failed; the chart simply asserted more than it knew, which is the exact defect
+                  this whole page was rewritten to stop making. Found by noticing the legend had
+                  silently dropped its hatched-bar clause. Check R3 asserts it now.
+                  NO BACKTICKS IN HERE. This comment is inside a template literal and quoting an
+                  identifier with a pair of them closes it — trap 1, and this is the sixteenth time,
+                  written while documenting a different bug. */
+               observed
+          from presence
+         where kind = 'session'
+           and greatest(last_seen_at, coalesce(ended_at, last_seen_at))
+               > now() - (${days} * interval '1 day')
+         order by started_at desc
+         limit ${TIMELINE_MAX_SESSIONS}
+    ` as Row[];
+    return rows.map(r => ({
+        project: String(r.project),
+        agent: String(r.agent),
+        session: String(r.session),
+        started_at: iso(r.started_at)!,
+        last_seen_at: iso(r.last_seen_at)!,
+        ended_at: iso(r.ended_at),
+        end_reason: r.end_reason == null ? null : String(r.end_reason),
+        branch: r.branch == null ? null : String(r.branch),
+        model: r.model == null ? null : String(r.model),
+        observed: r.observed !== false,
+    }));
+}
+
+/** The sub-agents over the same window, bounded the same way and for the same reason. */
+export async function subagentWindow(days = TIMELINE_DAYS): Promise<SubagentRow[]> {
+    await ensureSchema();
+    const rows = await sql()`
+        select id, project, agent, session, type, task, model, started_at, start_seen, ended_at,
+               outcome, tool_calls, edits, lines_added, lines_removed, observed
+          from subagents
+         where greatest(started_at, coalesce(ended_at, started_at))
+               > now() - (${days} * interval '1 day')
+         order by started_at desc
+         limit ${TIMELINE_MAX_SUBAGENTS}
+    ` as Row[];
+    return rows.map(r => ({
+        id: String(r.id),
+        project: String(r.project),
+        agent: String(r.agent),
+        session: String(r.session),
+        type: String(r.type),
+        task: r.task == null ? null : String(r.task),
+        model: r.model == null ? null : String(r.model),
+        started_at: iso(r.started_at)!,
+        start_seen: r.start_seen !== false,
+        ended_at: iso(r.ended_at),
+        outcome: r.outcome == null ? null : String(r.outcome),
+        tool_calls: r.tool_calls == null ? null : Number(r.tool_calls),
+        edits: r.edits == null ? null : Number(r.edits),
+        lines_added: r.lines_added == null ? null : Number(r.lines_added),
+        lines_removed: r.lines_removed == null ? null : Number(r.lines_removed),
+        observed: r.observed !== false,
+    }));
+}
+
+/* ================================================================================================
  * APPROVALS — a tool call an agent is holding on, waiting for one tap
  *
  * NOT a task and NOT a question. Nothing in `board()`'s counts reads this table, and the separate table
@@ -1945,12 +2526,14 @@ export async function putSpend(
 export async function agentsView(): Promise<{
     projects: ProjectSummary[];
     presence: PresenceRow[];
+    sessions: SessionRow[];
+    subagents: SubagentRow[];
     spend: SpendRow[];
 }> {
-    const [projectList, presence, spend] = await Promise.all([
-        projects(), presenceRows(), spendRows(),
+    const [projectList, presence, sessions, subagents, spend] = await Promise.all([
+        projects(), presenceRows(), sessionWindow(), subagentWindow(), spendRows(),
     ]);
-    return { projects: projectList, presence, spend };
+    return { projects: projectList, presence, sessions, subagents, spend };
 }
 
 /** Every spend row, from every source. The page sums them; nothing here decides anything. */

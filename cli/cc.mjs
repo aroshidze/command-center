@@ -33,10 +33,11 @@
  * behaves exactly as it did before they existed, which is the point: the setup story for somebody who wants
  * none of this is the same length it was.
  *
- *   cc presence  on|off|status  install the two heartbeat hooks in THIS project
+ *   cc presence  on|off|status  install the session and sub-agent hooks in THIS project
  *   cc approvals on|off|status  install the permission-relay hook in THIS project
  *   cc spend                    read Claude Code's usage records and post per-project totals
  *   cc heartbeat                (called BY a hook, reads its JSON on stdin — not for a human)
+ *   cc subagent                 (called BY a hook — one row per sub-agent, never per tool call)
  *   cc permission               (called BY a hook — holds the tool call while he decides)
  *
  * Add --json to any read command for machine-readable output, and --dry to `presence`, `approvals`,
@@ -56,7 +57,9 @@
  * "client returned ERROR on write" having created nothing.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+    closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -98,6 +101,45 @@ function detectAgent() {
     if (e.ANTIGRAVITY_SESSION || e.GEMINI_CLI) return 'antigravity';
     if (e.TERM_PROGRAM === 'vscode') return 'vscode';
     return 'unknown';
+}
+
+/**
+ * WHICH MODEL THIS SESSION IS ACTUALLY USING, read off its own transcript.
+ *
+ * THE HOOK DOES NOT TELL YOU. `SessionStart` documents `model` as "not guaranteed to be present", and
+ * measured on this machine it is simply absent — so the heartbeat has been posting `model: null` since
+ * the day it shipped and `/agents` has had a column for a value nothing ever sent. That was invisible
+ * because a missing model renders as nothing at all, which looks identical to a tidy row.
+ *
+ * The transcript is the harness's own record and it names the model on every assistant message. Reading
+ * it is legitimate here for the reason the whole local collector is legitimate (brief §1): what is
+ * local-only is PULLING, and this process is already local.
+ *
+ * THE TAIL AND NOT THE FILE. These reach fifty megabytes; a session hook that read one whole would be a
+ * pause at the end of every session. The last 256 KB covers many messages and costs a single seek.
+ *
+ * `<synthetic>` is skipped — it is what the harness records for messages it generated itself, it has no
+ * price in lib/prices.ts for the same reason, and reporting a session as running on it would be naming
+ * something that is not a model.
+ */
+function modelFromTranscript(path) {
+    if (!path) return null;
+    try {
+        const size = statSync(path).size;
+        const want = Math.min(size, 256 * 1024);
+        const fd = openSync(path, 'r');
+        const buf = Buffer.alloc(want);
+        readSync(fd, buf, 0, want, size - want);
+        closeSync(fd);
+        const found = [...buf.toString('utf8').matchAll(/"model"\s*:\s*"([^"]{1,60})"/g)]
+            .map(m => m[1])
+            .filter(m => m && !m.startsWith('<'));
+        return found.length ? found[found.length - 1] : null;
+    } catch {
+        /* No transcript yet (a brand-new session has an empty one), or no permission to read it. Both are
+         * ordinary, and neither is worth a word on stderr during somebody's session start. */
+        return null;
+    }
 }
 
 /*
@@ -498,6 +540,15 @@ switch (cmd) {
          * file this writes into a project carries no credential and is safe to commit.
          */
         const CC = 'node "$HOME/.command-center/cc.mjs"';
+        /*
+         * `matcher` is what keeps the sub-agent hooks off the firehose, and it is the whole reason this
+         * feature is allowed to exist. `Task|Agent` is the tool that spawns a sub-agent — `Task` in
+         * released Claude Code, `Agent` in the current harness — so a Read, an Edit or a Bash call never
+         * runs any of this. Without the matcher these three would fire on EVERY tool call, which is the
+         * firehose docs/BRIEF-NOTHING-BLOCKED.md §4 refuses and would put tens of thousands of rows a day
+         * into the same database `sync` reads.
+         */
+        const SPAWNER = 'Task|Agent';
         const HOOKS = {
             presence: [
                 /*
@@ -506,8 +557,39 @@ switch (cmd) {
                  * without this the "the session finished" heartbeat would be cancelled before an HTTP round
                  * trip completed, and every session would stay open forever on the page.
                  */
-                { event: 'SessionStart', command: `${CC} heartbeat`, timeout: 15 },
-                { event: 'SessionEnd', command: `${CC} heartbeat --end`, timeout: 15 },
+                { event: 'SessionStart', sub: 'heartbeat', command: `${CC} heartbeat`, timeout: 15 },
+                { event: 'SessionEnd', sub: 'heartbeat', command: `${CC} heartbeat --end`, timeout: 15 },
+                /*
+                 * THE SUB-AGENT ROW, opened and closed. Four events and one row, because the harness has
+                 * two different lifecycles behind one tool and neither of them is coverable by the other:
+                 *
+                 *   PreToolUse         a sub-agent was spawned — the only event that carries the start
+                 *   PostToolUse        a SYNCHRONOUS one finished (status "completed", with its tool
+                 *                      counts and line counts), or a BACKGROUNDED one launched, in which
+                 *                      case the response carries only the agentId to close it by later
+                 *   PostToolUseFailure the spawning call errored, which is the only way "it failed" is
+                 *                      ever knowable — without it a failed sub-agent stays open forever
+                 *   SubagentStop       a BACKGROUNDED one finished. Carries agent_id and nothing else,
+                 *                      which is why PostToolUse recording that id is load-bearing.
+                 *
+                 * Measured on this machine rather than assumed: a backgrounded spawn returns
+                 * `duration_ms: 9` about a tenth of a second in, and believing that number would have
+                 * drawn a nine-millisecond block for an agent that ran for seven seconds.
+                 */
+                {
+                    event: 'PreToolUse', matcher: SPAWNER, sub: 'subagent',
+                    command: `${CC} subagent`, timeout: 15,
+                },
+                {
+                    event: 'PostToolUse', matcher: SPAWNER, sub: 'subagent',
+                    command: `${CC} subagent`, timeout: 15,
+                },
+                {
+                    event: 'PostToolUseFailure', matcher: SPAWNER, sub: 'subagent',
+                    command: `${CC} subagent`, timeout: 15,
+                },
+                /* No matcher: SubagentStop is already about exactly one thing. */
+                { event: 'SubagentStop', sub: 'subagent', command: `${CC} subagent`, timeout: 15 },
             ],
             approvals: [
                 /*
@@ -515,7 +597,7 @@ switch (cmd) {
                  * it out is what makes the ten-minute promise visible in the file somebody reads when they
                  * wonder how long the hub is allowed to hold their agent up.
                  */
-                { event: 'PermissionRequest', command: `${CC} permission`, timeout: 600 },
+                { event: 'PermissionRequest', sub: 'permission', command: `${CC} permission`, timeout: 600 },
             ],
         }[cmd];
 
@@ -529,15 +611,34 @@ switch (cmd) {
             }
         }
 
-        /* Identified by the command string rather than by a marker field. A marker would be an unknown key in
+        /*
+         * Identified by the command string rather than by a marker field. A marker would be an unknown key in
          * somebody else's schema; the command names this CLI and its subcommand, which is unambiguous and
-         * cannot be invalidated by a settings-format change. */
+         * cannot be invalidated by a settings-format change.
+         *
+         * Matched on the SUBCOMMAND WORD, which is the repair of a predicate that had grown unreadable —
+         * it tested the last word of the command string, and the last word of `heartbeat --end` is
+         * `--end`. Every hook this feature installs names one of a small set of verbs, so the set is what
+         * is matched. It stays true for hooks written by an OLDER version of this CLI, which is what
+         * makes `presence off` still able to remove what `presence on` wrote last month.
+         */
+        const VERBS = [...new Set(HOOKS.map(h => h.sub))];
+        /** The distinct events this feature writes, for counting and for saying so. */
+        const EVENTS = [...new Set(HOOKS.map(h => h.event))];
         const mine = h => typeof h?.command === 'string' && h.command.includes('cc.mjs')
-            && HOOKS.some(x => h.command.includes(` ${x.command.split(' ').slice(-1)[0]}`)
-                || h.command.endsWith(x.command.slice(CC.length).trim()));
+            && VERBS.some(v => new RegExp(`cc\\.mjs"?\\s+${v}(\\s|$)`).test(h.command));
+
+        /* Every event this feature COULD have written, not only the ones it writes today — otherwise an
+         * upgrade that stops using an event would leave that hook behind forever and `off` would report
+         * success while a hook kept firing. */
+        const OUR_EVENTS = [...new Set([
+            ...HOOKS.map(h => h.event),
+            'SessionStart', 'SessionEnd', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
+            'SubagentStop', 'PermissionRequest',
+        ])];
 
         const installed = [];
-        for (const { event } of HOOKS) {
+        for (const event of OUR_EVENTS) {
             for (const group of settings.hooks?.[event] ?? []) {
                 for (const h of group.hooks ?? []) if (mine(h)) installed.push(event);
             }
@@ -549,15 +650,20 @@ switch (cmd) {
                 + `  ${settingsPath}\n`
                 + (installed.length
                     ? `  hooks: ${[...new Set(installed)].join(', ')}\n`
-                    : `  nothing installed. \`cc ${cmd} on\` adds ${HOOKS.map(h => h.event).join(' and ')}.\n`),
+                    : `  nothing installed. \`cc ${cmd} on\` adds ${EVENTS.length}: ${EVENTS.join(', ')}.\n`),
             );
             break;
         }
 
         /* Remove ours first, in both cases. `on` is then idempotent by construction rather than by a check —
-         * running it twice cannot produce two SessionStart hooks, which would post two heartbeats. */
+         * running it twice cannot produce two SessionStart hooks, which would post two heartbeats. It is
+         * also what upgrades an older install: the two hooks `presence on` wrote last month come out and
+         * the current set goes in, so re-running is how a project gains the sub-agent hooks.
+         *
+         * `mine` is scoped to THIS feature's verbs, which is what stops `presence off` from taking the
+         * permission relay's hook out with it while the loop is walking every event either feature uses. */
         settings.hooks = settings.hooks ?? {};
-        for (const { event } of HOOKS) {
+        for (const event of OUR_EVENTS) {
             const groups = settings.hooks[event];
             if (!Array.isArray(groups)) continue;
             for (const group of groups) {
@@ -571,16 +677,22 @@ switch (cmd) {
         }
 
         if (verb === 'on') {
-            for (const { event, command, timeout } of HOOKS) {
+            for (const { event, command, timeout, matcher } of HOOKS) {
                 settings.hooks[event] = settings.hooks[event] ?? [];
-                settings.hooks[event].push({ hooks: [{ type: 'command', command, timeout }] });
+                settings.hooks[event].push({
+                    /* The matcher is omitted rather than set to a catch-all where there is none. An empty
+                     * string is a valid "match everything" in this schema, and writing one on SessionStart
+                     * would be a meaningless key that reads like a mistake to whoever opens the file. */
+                    ...(matcher ? { matcher } : {}),
+                    hooks: [{ type: 'command', command, timeout }],
+                });
             }
         }
         if (!Object.keys(settings.hooks).length) delete settings.hooks;
 
         if (flags.has('--dry')) {
             process.stdout.write(
-                `Would ${verb === 'on' ? 'write' : 'remove'} ${HOOKS.map(h => h.event).join(' and ')} in\n`
+                `Would ${verb === 'on' ? 'write' : 'remove'} ${EVENTS.length} hook(s) — ${EVENTS.join(', ')} — in\n`
                 + `  ${settingsPath}\nNothing written (--dry). Result would be:\n\n`
                 + JSON.stringify(settings, null, 2) + '\n',
             );
@@ -595,10 +707,13 @@ switch (cmd) {
          * believing a feature is on, which is worse than it being off.
          */
         const back = JSON.parse(rf(settingsPath, 'utf8'));
-        const now = HOOKS.filter(({ event }) =>
+        /* Counted over EVERY event either feature uses, not only the ones being written. For `off` that
+         * is the difference between "the hooks I meant to remove are gone" and "no hook of mine is left",
+         * and only the second one is what the message about to be printed claims. */
+        const now = OUR_EVENTS.filter(event =>
             (back.hooks?.[event] ?? []).some(g => (g.hooks ?? []).some(mine)));
-        if (verb === 'on' && now.length !== HOOKS.length) {
-            die(`wrote ${settingsPath} but only ${now.length} of ${HOOKS.length} hooks read back. `
+        if (verb === 'on' && now.length !== EVENTS.length) {
+            die(`wrote ${settingsPath} but only ${now.length} of ${EVENTS.length} hooks read back. `
                 + 'Assume this is NOT on.');
         }
         if (verb === 'off' && now.length !== 0) {
@@ -607,7 +722,8 @@ switch (cmd) {
 
         process.stdout.write(
             verb === 'on'
-                ? `${cmd} ON for "${slug}" — ${HOOKS.map(h => h.event).join(' and ')} in ${settingsPath}\n`
+                ? `${cmd} ON for "${slug}" — ${EVENTS.length} hooks in ${settingsPath}\n`
+                  + `  ${EVENTS.join(', ')}\n`
                   + '  No token is in that file, so it is safe to commit.\n'
                   + (cmd === 'approvals'
                       ? '  Whoever can open the hub can now answer permission prompts in this project. '
@@ -647,16 +763,27 @@ switch (cmd) {
         }
 
         const body = { project, session };
+        /*
+         * THE MODEL IS SENT ON BOTH EVENTS, and it has to be, because neither one alone can supply it.
+         *
+         * `SessionStart` does not carry `model` — documented as "not guaranteed" and measured absent — so
+         * the only source is the transcript, and at the start of a fresh session the transcript is empty.
+         * At the END it is not. So a session's model is filled in by whichever of the two observations
+         * finds it, plus `cc subagent` on the way past for a session that is still running.
+         *
+         * `hook.model` first regardless, because if a harness ever does send it, it is the harness's own
+         * answer rather than one recovered from a file.
+         */
+        body.model = hook.model || modelFromTranscript(hook.transcript_path) || null;
         if (ending) {
             body.ended = true;
             body.end_reason = hook.reason || null;
         } else {
             /*
-             * The branch and the model, read off the machine rather than composed. There is deliberately no
-             * field describing what the session is DOING — see lib/presence.ts: an agent asked to report its
+             * The branch, read off the machine rather than composed. There is deliberately no field
+             * describing what the session is DOING — see lib/presence.ts: an agent asked to report its
              * own state reports favourably, and one green-while-you-slept status poisons the page.
              */
-            body.model = hook.model || null;
             body.branch = await (async () => {
                 try {
                     const { execFileSync } = await import('node:child_process');
@@ -670,6 +797,118 @@ switch (cmd) {
             await api('/api/agent/presence', { method: 'POST', body, cfg });
         } catch (e) {
             process.stderr.write(`cc heartbeat: ${e.message.split('\n')[0]}\n`);
+        }
+        break;
+    }
+
+    /*
+     * ==========================================================================================
+     * ONE ROW PER SUB-AGENT — driven by four hook events, all matched to the spawning tool.
+     * ==========================================================================================
+     *
+     * WHAT THE HARNESS ACTUALLY HANDS OVER. Measured by installing a hook that dumps its stdin and then
+     * running real sessions, rather than taken from the documentation, because the documentation does not
+     * describe the Task tool's payload at all. Recorded in docs/ITERATION-LOG.md §XXXII.
+     *
+     *   PreToolUse    tool_use_id, tool_input.{subagent_type, description, run_in_background}
+     *   PostToolUse   the same, plus tool_response — and the response has TWO shapes:
+     *                   synchronous: { status: "completed", agentId, resolvedModel, totalDurationMs,
+     *                                  totalToolUseCount, toolStats: { editFileCount, linesAdded, … } }
+     *                   background:  { isAsync: true, status: "async_launched", agentId, resolvedModel }
+     *   PostToolUseFailure  tool_use_id and an error. The only signal that a spawn failed.
+     *   SubagentStop  agent_id, agent_type — and nothing that joins back to the tool call, which is why
+     *                 PostToolUse recording `agentId` is what makes a backgrounded sub-agent closable.
+     *
+     * THE TRAP IN THAT LIST, and it is the one this whole page exists to avoid. A backgrounded spawn
+     * reports `duration_ms: 9` roughly a tenth of a second after it starts. That is the duration of the
+     * LAUNCH. Storing it as the sub-agent's duration would have drawn a nine-millisecond block for an
+     * agent that ran for seven seconds — a shape on a chart making a false claim about a span of time.
+     * So `async_launched` is not treated as an ending at all, and no duration is ever sent: the hub times
+     * the span from the two observations it makes itself.
+     *
+     * FAILS QUIETLY AND EXITS 0, exactly as `heartbeat` does and for the same reason. This runs when a
+     * sub-agent is spawned; if the hub is unreachable the right outcome is that the work carries on and
+     * the timeline is missing a block. It must never be the reason something did not run.
+     */
+    case 'subagent': {
+        const raw = (() => { try { return readFileSync(0, 'utf8'); } catch { return ''; } })();
+        let hook = {};
+        try { hook = JSON.parse(raw || '{}'); } catch { /* guarded below */ }
+
+        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+        const cwd = hook.cwd || process.cwd();
+        const project = flagValue('project') || slugify(String(cwd).split(/[\\/]/).filter(Boolean).pop() || '');
+        const session = hook.session_id || flagValue('session') || '';
+        const event = hook.hook_event_name || '';
+        const input = hook.tool_input && typeof hook.tool_input === 'object' ? hook.tool_input : {};
+        const response = hook.tool_response && typeof hook.tool_response === 'object'
+            ? hook.tool_response : {};
+
+        /*
+         * DEFENCE IN DEPTH ON THE TOOL NAME. The matcher in `.claude/settings.json` is what keeps these
+         * hooks off every other tool call, and this is the second lock on the same door: a settings file
+         * edited by hand, or a harness whose matcher semantics differ, must not turn this into the
+         * firehose the whole design refuses. `SubagentStop` has no tool name and is exempt because it is
+         * already about exactly one thing.
+         */
+        const spawner = t => t === 'Task' || t === 'Agent';
+        if (event !== 'SubagentStop' && !spawner(hook.tool_name)) break;
+        if (!project || !session) {
+            process.stderr.write('cc subagent: no project or session id on stdin; nothing sent\n');
+            break;
+        }
+
+        /*
+         * The PARENT session's model rides along, because this process has the transcript path in front
+         * of it and the session row may still be waiting for one — see `modelFromTranscript`. It is
+         * coalesced server-side, so a value the heartbeat already recorded is never overwritten by this.
+         */
+        const body = { project, session, session_model: modelFromTranscript(hook.transcript_path) };
+        if (event === 'SubagentStop') {
+            /* The only identifier this event carries. Without a matching row the hub creates one and
+             * marks its start as unobserved, which the timeline draws differently rather than hiding. */
+            body.agent_id = hook.agent_id || null;
+            body.type = hook.agent_type || null;
+            body.ended = true;
+            /* NO OUTCOME WORD. SubagentStop fires whether the work went well or badly and says nothing
+             * about which, so the hub's own default — "ended" — is the honest one. Sending "completed"
+             * here would be the same overclaim as reporting an agent as working on the strength of one
+             * sync, which is the defect the owner found in seconds. */
+            if (!body.agent_id) break;
+        } else if (event === 'PostToolUseFailure') {
+            body.tool_use_id = hook.tool_use_id || null;
+            body.type = input.subagent_type || null;
+            body.task = input.description || null;
+            body.ended = true;
+            body.outcome = 'failed';
+        } else if (event === 'PostToolUse') {
+            body.tool_use_id = hook.tool_use_id || null;
+            body.agent_id = response.agentId || null;
+            body.type = input.subagent_type || response.agentType || null;
+            body.task = input.description || null;
+            body.model = response.resolvedModel || null;
+            const launched = response.isAsync === true || response.status === 'async_launched';
+            if (!launched) {
+                body.ended = true;
+                body.outcome = response.status || 'ended';
+                body.tool_calls = response.totalToolUseCount ?? null;
+                const stats = response.toolStats && typeof response.toolStats === 'object'
+                    ? response.toolStats : {};
+                body.edits = stats.editFileCount ?? null;
+                body.lines_added = stats.linesAdded ?? null;
+                body.lines_removed = stats.linesRemoved ?? null;
+            }
+        } else {
+            /* PreToolUse — the spawn, and the only event that observes the start. */
+            body.tool_use_id = hook.tool_use_id || null;
+            body.type = input.subagent_type || null;
+            body.task = input.description || null;
+        }
+
+        try {
+            await api('/api/agent/subagent', { method: 'POST', body, cfg });
+        } catch (e) {
+            process.stderr.write(`cc subagent: ${e.message.split('\n')[0]}\n`);
         }
         break;
     }
@@ -808,6 +1047,238 @@ switch (cmd) {
             },
         }) + '\n');
         process.stderr.write(`cc permission: ${decision} from the hub\n`);
+        break;
+    }
+
+    /*
+     * ==========================================================================================
+     * BACKFILL — the last fortnight of activity, out of the transcripts already on this disk.
+     * ==========================================================================================
+     *
+     * THE PROBLEM IT SOLVES, in one sentence: hooks only know about sessions that started after they
+     * were installed, so a hub wired up this morning has nothing to say about last night — and a page
+     * that is empty on the day it ships is exactly the failure `/agents` already had once, when it
+     * rendered five rows reading "Nothing has ever reported in".
+     *
+     * A TRANSCRIPT IS A CONVERSATION AND NOT A SESSION, which is the finding that shapes this whole
+     * command. Measured on this machine: one of his Riff_Kitchen transcripts spans **eleven days**, from
+     * 28 July to 8 August, because resuming a conversation appends to the same file. Posting a file as a
+     * session would have drawn an eleven-day bar that was false about almost every hour it covered.
+     *
+     * So a file is split into STRETCHES OF ACTIVITY at gaps of half an hour or more, and a stretch is
+     * what gets a row. Every boundary is a real message timestamp; nothing is estimated, nothing is
+     * rounded outward, and the hub marks every row `observed = false` so the page can draw a
+     * reconstruction differently from a measurement. Across fourteen days of his own history that is
+     * 271 stretches over 8 projects — a full page on the morning it ships instead of an empty one.
+     *
+     *   cc backfill              post the last 14 days
+     *   cc backfill --days 30    a different window
+     *   cc backfill --dry        count them and post nothing
+     */
+    case 'backfill': {
+        const { readdirSync, statSync } = await import('node:fs');
+        const { join: j } = await import('node:path');
+        const base = flagValue('from') || j(homedir(), '.claude', 'projects');
+        const days = Math.max(1, Math.min(Number(flagValue('days') ?? 14), 365));
+        const cutoff = Date.now() - days * 864e5;
+        /*
+         * THE GAP THAT SEPARATES ONE STRETCH FROM THE NEXT. Thirty minutes.
+         *
+         * Short enough that a morning and an evening in the same conversation are two blocks, which is
+         * what he is looking at the page to see. Long enough to survive the things that legitimately
+         * produce silence inside one sitting — a long build, a test run, a sub-agent that thinks for
+         * ten minutes. It is stated on the page rather than left as a number only this file knows.
+         */
+        const GAP = 30 * 60 * 1000;
+
+        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+
+        /* Which sessions the hub has already measured for itself. A hook's own record always beats a
+         * reconstruction of the same session, and the hub refuses the overwrite anyway — this only
+         * saves reading and splitting a fifty-megabyte file to produce rows that would be refused. */
+        let alreadyObserved = new Set();
+        if (!flags.has('--dry')) {
+            try {
+                const seen = await api('/api/agent/backfill', { cfg });
+                alreadyObserved = new Set(seen.observed_sessions || []);
+            } catch (e) {
+                die(`could not ask the hub what it already has (${e.message.split('\n')[0]}). `
+                    + 'Nothing was sent.');
+            }
+        }
+
+        let dirs;
+        try {
+            dirs = readdirSync(base).filter(d => {
+                try { return statSync(j(base, d)).isDirectory(); } catch { return false; }
+            });
+        } catch (e) {
+            die(`could not read ${base} (${e.message}).\n\n`
+                + '  That is where Claude Code keeps its transcripts. If yours are elsewhere, pass '
+                + '--from <dir>.\n  Nothing was sent.');
+        }
+
+        const sessions = [];
+        const subagents = [];
+        let filesRead = 0;
+        let skipped = 0;
+
+        for (const d of dirs) {
+            const dir = j(base, d);
+            let entries;
+            try { entries = readdirSync(dir); } catch { continue; }
+
+            for (const f of entries.filter(x => x.endsWith('.jsonl'))) {
+                const sessionUuid = f.replace(/\.jsonl$/, '');
+                if (alreadyObserved.has(sessionUuid)) { skipped++; continue; }
+
+                let text;
+                try { text = readFileSync(j(dir, f), 'utf8'); } catch { continue; }
+
+                /*
+                 * One pass, collecting only what a block needs. `cwd`, `gitBranch` and the model are
+                 * carried on the messages themselves, so nothing here has to be inferred from the folder
+                 * name — which matters because the folder name is a mangled path and the cwd is the
+                 * truth. The FIRST cwd wins for the same reason `cc spend` walks a path outward-in.
+                 */
+                const points = [];
+                let cwd = null;
+                for (const line of text.split('\n')) {
+                    if (!line) continue;
+                    let o;
+                    try { o = JSON.parse(line); } catch { continue; }
+                    if (!o.timestamp) continue;
+                    const t = Date.parse(o.timestamp);
+                    if (!Number.isFinite(t) || t < cutoff) continue;
+                    if (!cwd && o.cwd) cwd = o.cwd;
+                    const model = o?.message?.model;
+                    points.push({
+                        t,
+                        branch: o.gitBranch || null,
+                        model: model && !String(model).startsWith('<') ? model : null,
+                    });
+                }
+                if (!points.length) continue;
+                filesRead++;
+                points.sort((a, b) => a.t - b.t);
+
+                const project = slugify(String(cwd || d).split(/[\\/]/).filter(Boolean).pop() || '');
+                if (!project) continue;
+
+                let run = [points[0]];
+                let index = 0;
+                const flush = () => {
+                    const first = run[0];
+                    const last = run[run.length - 1];
+                    /*
+                     * A stretch of ONE message is a moment, not a span, and drawing it as a block of
+                     * zero width would be a claim with no evidence behind it either way. Kept rather
+                     * than dropped — it is still true that something ran — and the hub stores identical
+                     * start and end times, which the page renders as a moment rather than a duration.
+                     */
+                    index++;
+                    /* A colon, not a hash: the hub strips anything outside its session alphabet, and a
+                     * stripped separator would collide stretch 1 followed by 2 with stretch 12. */
+                    sessions.push({
+                        project,
+                        session: `${sessionUuid}:${index}`,
+                        started_at: new Date(first.t).toISOString(),
+                        ended_at: new Date(last.t).toISOString(),
+                        branch: [...run].reverse().find(p => p.branch)?.branch ?? null,
+                        model: [...run].reverse().find(p => p.model)?.model ?? null,
+                    });
+                    return { start: first.t, end: last.t, session: `${sessionUuid}:${index}` };
+                };
+
+                const stretches = [];
+                for (let i = 1; i < points.length; i++) {
+                    if (points[i].t - points[i - 1].t > GAP) { stretches.push(flush()); run = []; }
+                    run.push(points[i]);
+                }
+                stretches.push(flush());
+
+                /*
+                 * THE SUB-AGENTS OF THIS CONVERSATION, from the harness's own sidecar files.
+                 *
+                 * `<session>/subagents/agent-<id>.meta.json` carries `agentType`, `description` and the
+                 * `toolUseId`; the `.jsonl` beside it carries the messages, whose first and last
+                 * timestamps are the span. Each one is attached to whichever stretch contains its start,
+                 * so a sub-agent is nested inside the block that actually spawned it rather than beside
+                 * it.
+                 */
+                const subDir = j(dir, sessionUuid, 'subagents');
+                let subFiles = [];
+                try { subFiles = readdirSync(subDir).filter(x => x.endsWith('.meta.json')); } catch { /* none */ }
+                for (const m of subFiles) {
+                    let meta;
+                    try { meta = JSON.parse(readFileSync(j(subDir, m), 'utf8')); } catch { continue; }
+                    const agentId = m.replace(/^agent-/, '').replace(/\.meta\.json$/, '');
+                    let times = [];
+                    let model = null;
+                    try {
+                        for (const line of readFileSync(j(subDir, `agent-${agentId}.jsonl`), 'utf8').split('\n')) {
+                            if (!line) continue;
+                            let o;
+                            try { o = JSON.parse(line); } catch { continue; }
+                            if (o.timestamp) {
+                                const t = Date.parse(o.timestamp);
+                                if (Number.isFinite(t)) times.push(t);
+                            }
+                            const mm = o?.message?.model;
+                            if (mm && !String(mm).startsWith('<')) model = mm;
+                        }
+                    } catch { continue; }
+                    if (!times.length) continue;
+                    times.sort((a, b) => a - b);
+                    const start = times[0];
+                    if (start < cutoff) continue;
+                    const owner = stretches.find(s => start >= s.start && start <= s.end)
+                        ?? stretches[stretches.length - 1];
+                    subagents.push({
+                        project,
+                        session: owner.session,
+                        agent_id: agentId,
+                        type: meta.agentType || null,
+                        task: meta.description || null,
+                        model,
+                        started_at: new Date(start).toISOString(),
+                        ended_at: new Date(times[times.length - 1]).toISOString(),
+                    });
+                }
+            }
+        }
+
+        if (!sessions.length) {
+            die(`read ${dirs.length} folder(s) under ${base} and found no activity in the last ${days} `
+                + `day(s)${skipped ? `, and skipped ${skipped} session(s) the hub already measured` : ''}.\n`
+                + '  Nothing was sent.');
+        }
+
+        const byProject = new Map();
+        for (const s of sessions) byProject.set(s.project, (byProject.get(s.project) ?? 0) + 1);
+
+        if (flags.has('--dry')) {
+            process.stdout.write(
+                `${filesRead} transcript(s) with activity in the last ${days} day(s) → `
+                + `${sessions.length} stretch(es) and ${subagents.length} sub-agent(s). `
+                + 'Nothing sent (--dry).\n'
+                + [...byProject.entries()].sort((a, b) => b[1] - a[1])
+                    .map(([p, n]) => `  ${p.padEnd(28)} ${n}`).join('\n') + '\n',
+            );
+            break;
+        }
+
+        const r = await api('/api/agent/backfill', {
+            method: 'POST', cfg, body: { sessions, subagents },
+        });
+        process.stdout.write(
+            `Read ${filesRead} transcript(s) and posted ${r.sessions} stretch(es) of activity and `
+            + `${r.subagents} sub-agent(s) across ${byProject.size} project(s).\n`
+            + (r.kept ? `  ${r.kept} left alone — the hub had measured those itself, which beats a `
+                + 'reconstruction.\n' : '')
+            + (skipped ? `  ${skipped} transcript(s) skipped for the same reason.\n` : '')
+            + '  Marked as reconstructed rather than observed, and the page says which.\n',
+        );
         break;
     }
 

@@ -78,6 +78,18 @@ caused a specific failure, and each is enforced by a check that has been demonst
   which is the hub quietly going out of date. `/agents` says which, per project, in one sentence. There is a
   rule about those sentences: **if it needs the word "you", rewrite it.** A quiet project is a fact about the
   agents, not an accusation about your attention, and check A3 renders all five states to assert it.
+- **You can see what actually ran last night, including the sub-agents.** `/agents` draws a 24-hour chart:
+  a lane per project, a bar per run, and every sub-agent nested inside the run that spawned it — what it
+  was asked to do, how long it took and how it ended. **One row per session and one per sub-agent, never
+  one per tool call**, because a session makes hundreds of those and a hook on each is a firehose. And
+  because a bar is a claim about a span of time, the four kinds of claim are drawn differently: a run still
+  going has no right-hand edge, a run that started and was never closed is drawn to the last thing *seen*
+  rather than to now, and a run recovered from Claude Code's own transcript is hatched. A run too short to
+  draw as a bar becomes a tick rather than a bar with a minimum width, because a bar that narrow would be
+  claiming a length it does not have.
+- **It is not empty on the day you install it.** Hooks only know about sessions that start after they
+  exist, so `cc backfill` reads Claude Code's own transcripts and posts the last fortnight. On the machine
+  this was built on that is 271 stretches of work across eight projects, one command, no waiting.
 - **A tool call waiting for permission can be answered from your phone**, and this is the one thing every
   competing product in the category exists for. A Claude Code hook holds the call, the hub messages you with
   **Allow** and **Deny**, and if you do not answer within about ten minutes **it hands back to the terminal
