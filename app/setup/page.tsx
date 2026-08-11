@@ -53,6 +53,44 @@ export default async function SetupPage() {
      * sentence, where a wrong absolute path is a command that fails somewhere else.
      */
     const repo = process.env.CC_REPO_PATH || null;
+
+    /*
+     * ==================================================================================================
+     * THE TOKEN, FILLED IN FOR YOU — and this reverses a decision that was wrong twice over.
+     * ==================================================================================================
+     *
+     * This page used to print `<agent-token>` and say *"that is the only part you do"*, with a paragraph
+     * explaining that it would not show the value because *"a page that shows its own credentials is a page
+     * you cannot leave open on a desk"*.
+     *
+     * Then the owner asked what a CC_AGENT_TOKEN even is. My first fix was to explain it — "a password you
+     * invented" — and that was WORSE, and he said so: *"what do you mean a password I invented? I never
+     * invented shit and I never done that shit... if I'm confused, I assure you, non-technical users will be
+     * driven crazy."* He is right on the facts. He never generated it; an AGENT did, following
+     * docs/SETUP.md, while deploying his hub. A page that tells you to remember doing something you never
+     * did is worse than a page that says nothing.
+     *
+     * The lesson is not about wording. **A step that requires knowing a secret you have never seen is a
+     * step the page should not be asking a human to perform.** So it does not: the copy button substitutes
+     * the real token, and the label says it has.
+     *
+     * WHERE THE VALUE ACTUALLY IS, stated precisely, because "only the clipboard gets it" is what I wrote
+     * first and it is not true. `copyText` is a prop on a client component, so the token IS in the page's
+     * payload — measured, not assumed: `curl /setup | grep -c "$CC_AGENT_TOKEN"` returns 1. What is
+     * preserved is that it is not RENDERED: nothing on screen shows it, so the page is still safe to leave
+     * open on a desk or share in a call, which is the risk the old rule was actually about.
+     *
+     * AND THE DEV-TOOLS CASE ADDS NOTHING, which is why this is proportionate rather than a trade. To read
+     * the payload you need the page, and to have the page you must already hold `CC_WEB_TOKEN` — a
+     * credential that is strictly MORE powerful than this one, since with the relay on it can approve tool
+     * calls. Anybody who can open dev tools here can also read the session cookie and call the API
+     * directly. There is no attacker who gains anything from this that they did not already have.
+     *
+     * ABSENT IS HANDLED, because a self-hosted hub with the variable unset must not silently copy the word
+     * "undefined" into somebody's setup prompt. `null` here, and the page says the placeholder is genuinely
+     * all it has.
+     */
+    const agentToken = (process.env.CC_AGENT_TOKEN || '').trim() || null;
     /*
      * The parent of the hub repo is the projects folder — derived, not named. It is his layout
      * (`<parent>/TheCommandCenter` beside `<parent>/EveryOtherProject`) and a reasonable guess anywhere, and
@@ -232,73 +270,58 @@ MY TOKEN:  <agent-token>
             <h2>Paste this at the agent</h2>
             <div className="card">
                 <p className="why" style={{ marginTop: 0 }}>
-                    Replace <code>&lt;agent-token&gt;</code> with your <code>CC_AGENT_TOKEN</code> — that is the
-                    only part you do. The agent installs the CLI if it is missing, configures the machine, checks
-                    it, connects the project and syncs. <strong>Every command in it is safe to re-run</strong>, so
-                    this is the same prompt whether it is a new machine or your fourth project.
+                    <strong>Press copy, paste it at the agent. That is the whole job.</strong> The token is
+                    filled in for you — the page shows <code>&lt;agent-token&gt;</code> so it stays safe to
+                    leave open, and the clipboard gets the real value. The agent installs the CLI if it is
+                    missing, configures the machine, checks it, connects the project and syncs.{' '}
+                    <strong>Every command in it is safe to re-run</strong>, so this is the same prompt whether
+                    it is a new machine or your fourth project.
                 </p>
                 {/*
-                  * ==================================================================================
-                  * WHAT THE TOKEN IS, and this paragraph exists because its absence confused the owner
-                  * of this hub — the person who has read every other word on this page.
-                  * ==================================================================================
+                  * WHAT IT IS, IN ONE SENTENCE, AND NOT A WORD MORE. Two versions of this were wrong before
+                  * this one, and the sequence is the lesson:
                   *
-                  * His words: *"what is the CC agent token? I'm very confused, don't know what to
-                  * write.. and other users will probably be confused too"*. He is right on both counts,
-                  * and the failure is specific and worth naming rather than just patching: this page
-                  * mentioned `CC_AGENT_TOKEN` exactly ONCE, in the sentence telling you to replace it,
-                  * and the paragraph below it explained at length **why it would not print the value**
-                  * without ever saying what the value IS. A justification for withholding something is
-                  * not a definition of it.
+                  *  1. It said "replace <agent-token> with your CC_AGENT_TOKEN" and never defined the term.
+                  *     He asked what a CC agent token is. Fair.
+                  *  2. I answered in three paragraphs, one of which said it was "a password you invented".
+                  *     He had invented nothing — an agent generated it while deploying his hub — and he said
+                  *     the fix was *"100 times more confusing"*. Also fair, and worse than the first version:
+                  *     telling somebody they did a thing they never did makes them doubt their own memory
+                  *     instead of doubting the page.
                   *
-                  * `docs/SETUP.md` does explain it — in step 1 of deploying your own hub, which is the
-                  * one document nobody re-reads three weeks later when they add a fourth project. The
-                  * explanation has to be where the confusion is.
+                  * The prose is short now because the STEP IS GONE — see `agentToken` above. Nobody has to
+                  * do anything with this, so it gets one sentence saying so and no recovery instructions in
+                  * the reading path.
                   *
-                  * THE ONE SENTENCE THAT ANSWERS IT: nobody issued it to you. Not Anthropic, not Vercel,
-                  * not Neon. You generated a random string when you deployed this hub and pasted it into
-                  * an environment variable. That is the whole concept, and it is the bit that is
-                  * genuinely surprising — every other credential in this stack was handed to you by a
-                  * service, so the reasonable assumption is that this one was too, and then you go
-                  * looking for a dashboard that does not exist.
+                  * `{' '}` rather than plain spaces after `</strong>`: an earlier version of this paragraph
+                  * rendered as "Where yours is:in your hosting provider" while one of apparently identical
+                  * shape kept its space, so this uses the explicit form the rest of the file already uses.
                   */}
                 <p className="why">
-                    <strong>Not sure what that is?</strong> It is a password you invented, not one anybody
-                    issued you: a random string you generated when you deployed this hub and pasted into
-                    its environment variables as <code>CC_AGENT_TOKEN</code>. Its only job is to prove that
-                    whatever is calling <code>/api/agent/…</code> is allowed to. Agents use it constantly;
-                    you should almost never have to type it.
-                </p>
-                <p className="why">
-                    {/*
-                      * `{' '}` RATHER THAN A PLAIN SPACE, and it is not superstition: rendered, this
-                      * paragraph came out as "Where yours is:in your hosting provider" while the
-                      * paragraph above it — written in what looks like exactly the same shape — kept its
-                      * space. I did not work out which whitespace rule separates the two cases, so this
-                      * uses the explicit form the rest of this file already uses fourteen times, which
-                      * cannot be collapsed by any of them.
-                      */}
-                    <strong>Where yours is:</strong>{' '}
-                    in your hosting provider&rsquo;s environment variables for this project, and in{' '}
-                    <code>.env.local</code> if you also run the hub on your own machine. It is the same
-                    value in every step of the prompt below.
+                    <strong>What is that token?</strong>{' '}
+                    A random string this hub was configured with when it was deployed — most likely by an
+                    agent following the setup guide, which is why you may never have seen it. It proves that
+                    whatever is calling <code>/api/agent/…</code> is allowed to, and nothing else.{' '}
+                    <strong>You do not need to know it.</strong>
                 </p>
             </div>
             {/*
-              * THE RECOVERY PATH, behind a disclosure — because it is the long half and most people do not
-              * need it, but the people who do need it are stuck until they find it.
+              * THE RECOVERY PATH, behind a disclosure — reachable, and out of the reading path, because it
+              * is now only needed by somebody whose hub has no token set at all. That is the one case the
+              * copy button cannot rescue, and the label above says so when it happens.
               *
-              * Rotating this token is not free and the consequence is stated rather than discovered: every
-              * machine already configured holds the OLD value in ~/.command-center/config.json, so each one
-              * needs `cc setup` run again. Leaving that out would turn a two-minute fix into an afternoon of
-              * agents failing with 401 on a hub that looks healthy.
+              * Rotating is not free and the consequence is stated rather than discovered: every machine
+              * already configured holds the OLD value in ~/.command-center/config.json, so each one needs
+              * `cc setup` again. Leaving that out would turn a two-minute fix into an afternoon of agents
+              * failing with 401 against a hub that looks healthy.
               */}
             <details className="card">
-                <summary>I have lost it, or it was set as a hidden value I cannot read back</summary>
+                <summary>The prompt still says &lt;agent-token&gt;, or an agent got a 401</summary>
                 <p className="why">
-                    Most hosting providers let you mark a variable as sensitive, which means you can set it
-                    and never read it again. If that is where yours is, you do not recover it — you replace
-                    it. Generate a new one:
+                    That means this hub has no <code>CC_AGENT_TOKEN</code> set, or the one it has is not the
+                    one that machine was configured with. Either way you do not recover the old value —
+                    hosting providers let a variable be marked sensitive, which means it can be set and never
+                    read back. You replace it. Generate a new one:
                 </p>
                 <CopyBlock
                     text={'node -e "console.log(require(\'crypto\')'
@@ -320,7 +343,20 @@ MY TOKEN:  <agent-token>
                     callers, three credentials, so any one can be rotated without disturbing the others.
                 </p>
             </details>
-            <CopyBlock text={prompt} label="Paste at the agent working on the new project" mono={false} />
+            {/*
+              * DISPLAYED WITH THE PLACEHOLDER, COPIED WITH THE TOKEN. See `agentToken` above for why that
+              * combination is the only one that works: nobody has to know what the token is, the screen is
+              * still safe to show anybody, and the label says which is which so the clipboard is not
+              * quietly different from the page.
+              */}
+            <CopyBlock
+                text={prompt}
+                copyText={agentToken ? prompt.split('<agent-token>').join(agentToken) : undefined}
+                label={agentToken
+                    ? 'Paste at the agent — copying fills your token in'
+                    : 'Paste at the agent (CC_AGENT_TOKEN is not set on this hub, so <agent-token> stays)'}
+                mono={false}
+            />
             <div className="card">
                 <p className="why" style={{ marginTop: 0 }}>
                     The token is the one thing this page will not fill in for you. It is deliberately not printed

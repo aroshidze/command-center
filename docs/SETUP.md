@@ -51,17 +51,13 @@ and an annoying way to find out you truncated a paste.
 - `CC_WEB_TOKEN` is what unlocks the page on your phone, once ever, via a link.
 - `CC_TELEGRAM_SECRET` is only needed if you set up the bot in step 2.
 
-**Nobody issues you these.** They are passwords you are inventing right now — the command above is just a
-convenient way to produce a string nobody will guess. There is no dashboard anywhere that will show them to
-you later, because no service knows about them: the hub compares what a caller sends against what you put in
-its environment, and that is the whole mechanism.
+**Nobody issues these two.** Unlike the database URL and the bot token, no service knows they exist and none
+will show them to you later — the commands above just produce a string nobody will guess, and the hub compares
+what a caller sends against what is in its environment. **Save them somewhere you can get them back.**
 
-That matters more than it sounds, and it is the one thing on this page that has confused a reader who
-understood everything else. Every other credential in this stack — the database URL, the bot token — was
-handed to you by a service that will show it to you again. These two were not. **Keep them somewhere you can
-get them back**, because the practical recovery from losing `CC_AGENT_TOKEN` is not recovery at all: you
-generate a new one, set it, redeploy, and then re-run `cc setup` on every machine that already had the old
-one — each of which fails with `401` against a hub that looks perfectly healthy until you do.
+Losing `CC_AGENT_TOKEN` is survivable but not free: you generate a new one, redeploy, and re-run `cc setup` on
+every machine that had the old one, each of which returns `401` against a healthy hub until you do. You will
+rarely need to type it — `/setup` fills it into the prompt you paste at an agent.
 
 ---
 
