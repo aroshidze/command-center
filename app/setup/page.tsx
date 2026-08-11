@@ -74,17 +74,25 @@ export default async function SetupPage() {
      * step the page should not be asking a human to perform.** So it does not: the copy button substitutes
      * the real token, and the label says it has.
      *
-     * WHERE THE VALUE ACTUALLY IS, stated precisely, because "only the clipboard gets it" is what I wrote
-     * first and it is not true. `copyText` is a prop on a client component, so the token IS in the page's
-     * payload — measured, not assumed: `curl /setup | grep -c "$CC_AGENT_TOKEN"` returns 1. What is
-     * preserved is that it is not RENDERED: nothing on screen shows it, so the page is still safe to leave
-     * open on a desk or share in a call, which is the risk the old rule was actually about.
+     * AND THEN IT WAS PRINTED ON SCREEN TOO, which is the third and final version of this. The clever
+     * arrangement — show `<agent-token>`, copy the real value — was still wrong, and he found it in one
+     * look: *"the fucking token is still there and things got even more confusing."*
      *
-     * AND THE DEV-TOOLS CASE ADDS NOTHING, which is why this is proportionate rather than a trade. To read
-     * the payload you need the page, and to have the page you must already hold `CC_WEB_TOKEN` — a
-     * credential that is strictly MORE powerful than this one, since with the relay on it can approve tool
-     * calls. Anybody who can open dev tools here can also read the session cookie and call the API
-     * directly. There is no attacker who gains anything from this that they did not already have.
+     * Of course it was. A placeholder ON SCREEN is a job on screen. A reader's eye stops at
+     * `<agent-token>`, decides there is something to fill in, and starts hunting for it — and the fact that
+     * the clipboard would have handled it is invisible, so the cleverness bought nothing and cost a reader
+     * their bearings. **If the value has to end up in the prompt, print the prompt with the value in it.**
+     *
+     * WHAT THAT COSTS, measured rather than assumed. The token was already in this page's payload when it
+     * was only being copied — `curl /setup | grep -o "$CC_AGENT_TOKEN" | wc -l` returned 3 — because
+     * `copyText` was a client prop. So rendering it moves the value from the payload to the screen and
+     * nowhere new.
+     *
+     * The screen is a real exposure the payload was not: somebody standing behind you, or a shared call.
+     * That is the risk the original rule was about and it is now accepted, deliberately, because the
+     * alternative was measured against a real person and failed. Everything else is unchanged: to see this
+     * page at all you must already hold `CC_WEB_TOKEN`, which is the MORE powerful credential — with the
+     * relay on it can approve tool calls — so no attacker gains anything here they did not already have.
      *
      * ABSENT IS HANDLED, because a self-hosted hub with the variable unset must not silently copy the word
      * "undefined" into somebody's setup prompt. `null` here, and the page says the placeholder is genuinely
@@ -128,7 +136,7 @@ export default async function SetupPage() {
      */
     const prompt = `Connect this project to my Command Center and then get on with the work. It is a hub I use across all my projects for anything that needs me personally, and for decisions you are blocked on.
 
-Do ALL of the following yourself. The only thing I have to do is give you the token below — everything else is a command you can run, and every one of them is safe to re-run, so do not ask me whether it is already done. Just do it and tell me what happened.
+Do ALL of the following yourself. Everything you need is in this message, including the token — there is nothing for me to look up, so do not ask me for anything. Every command below is safe to re-run, so do not ask me whether it is already done either. Just do it and tell me what happened.
 
 MY HUB:    ${hub}
 MY TOKEN:  <agent-token>
@@ -168,6 +176,17 @@ MY TOKEN:  <agent-token>
 6. Read the Command Center section it just wrote into AGENTS.md — that is the full field reference. Then tell me back, in your own words: what you will use "cc task" for versus "cc ask", what default_option does, and what you will say to me differently depending on whether a filed task reports notified true or false. I want to know you understood it, not that you read it.
 
 7. Then get on with the actual work. From here: anything needing my account, my card, my phone or my physical presence becomes a "cc task" with a required verify line. Anything you are blocked on becomes a "cc ask" with 2-4 options plus default_option and hours, so you are never stuck waiting for me. Never write task lists into chat — they scroll away. Never put a secret in a task; the hub refuses credential-shaped values by rule, so say where the value lives instead.`;
+
+    /*
+     * THE PROMPT WITH THE TOKEN ALREADY IN IT, which is the only version anybody sees.
+     *
+     * `prompt` keeps the placeholder because the raw-commands disclosure further down shares the same
+     * substitution and because a hub with no token set must still print something honest. Everything a
+     * reader touches uses this one.
+     */
+    const filledPrompt = agentToken
+        ? prompt.split('<agent-token>').join(agentToken)
+        : prompt;
 
     /* 'your-project' rather than a real slug: this block is the generic text, and pointing it at one of his
      * projects would read as instructions for that project specifically. cc onboard substitutes the real one. */
@@ -264,45 +283,48 @@ MY TOKEN:  <agent-token>
               * of the instructions.
               *
               * COMPUTED, NOT PASTED, which is this file's header rule: the hub URL comes from the request, so the
-              * prompt cannot name the wrong hub. The token stays a placeholder — a page that prints its own
-              * credentials is a page you cannot leave open on a desk.
+              * prompt cannot name the wrong hub. The token is substituted for the same reason — see `agentToken`
+              * above for the three attempts that took.
+              *
+              * ==================================================================================================
+              * v4 DELETED THE EXPLANATION RATHER THAN REWRITING IT A FOURTH TIME.
+              * ==================================================================================================
+              *
+              * Three versions of a paragraph about the token were tried here. The first did not define it, the
+              * second told him he had invented it himself, the third defined it correctly in one sentence. His
+              * verdict on the third: *"even the explanation is confusing, everything is confusing. the user won't
+              * understand anything. why can't it be just copy and paste."*
+              *
+              * He is right, and it was my mistake three times because I kept treating a WORDING problem as the
+              * thing to fix. There is nothing for a reader to DO with that token — so a paragraph about it is not
+              * clarification, it is a paragraph implying a decision exists in the one place on this page where
+              * none does. Two sentences: what to do, and that re-running is safe. Everything else that stood here
+              * was deleted rather than reworded.
               */}
-            <h2>Paste this at the agent</h2>
+            {/* NO SECOND HEADING. The `h1` above already says "Adding a project"; an `h2` saying "Add a
+                project" 60px under it was two headings for one thing, which is the shape this page keeps
+                growing and the reason it read as overcomplicated. */}
             <div className="card">
-                <p className="why" style={{ marginTop: 0 }}>
-                    <strong>Press copy, paste it at the agent. That is the whole job.</strong> The token is
-                    filled in for you — the page shows <code>&lt;agent-token&gt;</code> so it stays safe to
-                    leave open, and the clipboard gets the real value. The agent installs the CLI if it is
-                    missing, configures the machine, checks it, connects the project and syncs.{' '}
-                    <strong>Every command in it is safe to re-run</strong>, so this is the same prompt whether
-                    it is a new machine or your fourth project.
-                </p>
                 {/*
-                  * WHAT IT IS, IN ONE SENTENCE, AND NOT A WORD MORE. Two versions of this were wrong before
-                  * this one, and the sequence is the lesson:
+                  * "SAME PROMPT EVERY TIME" IS THE SENTENCE, and it is here because he asked the question it
+                  * answers: *"this needs to be set up for every project, right? … We need two prompts: one
+                  * for the initial first setup, a lighter prompt for every next project. Or am I missing
+                  * something?"*
                   *
-                  *  1. It said "replace <agent-token> with your CC_AGENT_TOKEN" and never defined the term.
-                  *     He asked what a CC agent token is. Fair.
-                  *  2. I answered in three paragraphs, one of which said it was "a password you invented".
-                  *     He had invented nothing — an agent generated it while deploying his hub — and he said
-                  *     the fix was *"100 times more confusing"*. Also fair, and worse than the first version:
-                  *     telling somebody they did a thing they never did makes them doubt their own memory
-                  *     instead of doubting the page.
+                  * A reasonable thing to expect, and the honest answer is that the SECOND project is already
+                  * lighter — the agent skips what is done — but that the lightness is a property of the CLI
+                  * rather than of a shorter prompt. Two prompts is also a version this page already had and
+                  * he already rejected: v2 carried a "First time on this machine?" block and his verdict was
+                  * *"the setup page is overcomplicated and it breaks its own rule."*
                   *
-                  * The prose is short now because the STEP IS GONE — see `agentToken` above. Nobody has to
-                  * do anything with this, so it gets one sentence saying so and no recovery instructions in
-                  * the reading path.
-                  *
-                  * `{' '}` rather than plain spaces after `</strong>`: an earlier version of this paragraph
-                  * rendered as "Where yours is:in your hosting provider" while one of apparently identical
-                  * shape kept its space, so this uses the explicit form the rest of the file already uses.
+                  * So one prompt, and one clause saying what it does differently the second time — because
+                  * he had to ask, which means the page was not saying it.
                   */}
-                <p className="why">
-                    <strong>What is that token?</strong>{' '}
-                    A random string this hub was configured with when it was deployed — most likely by an
-                    agent following the setup guide, which is why you may never have seen it. It proves that
-                    whatever is calling <code>/api/agent/…</code> is allowed to, and nothing else.{' '}
-                    <strong>You do not need to know it.</strong>
+                <p className="why" style={{ marginTop: 0 }}>
+                    Copy this and paste it at the agent working in the project folder.{' '}
+                    <strong>That is the whole thing.</strong> It connects the project and tells you what
+                    happened. <strong>Same prompt every time</strong> — on a new machine it installs the CLI
+                    first; on your fourth project it finds that already done and skips straight to connecting.
                 </p>
             </div>
             {/*
@@ -314,7 +336,13 @@ MY TOKEN:  <agent-token>
               * already configured holds the OLD value in ~/.command-center/config.json, so each one needs
               * `cc setup` again. Leaving that out would turn a two-minute fix into an afternoon of agents
               * failing with 401 against a hub that looks healthy.
+              *
+              * RENDERED ONLY WHEN THE TOKEN IS MISSING, and that conditional is the point. It sat above the
+              * copy block, permanently, telling everybody about a failure mode that cannot happen on a hub
+              * whose token is set — which is every working hub. A disclosure is still a line of text on
+              * screen; offering a remedy for a problem the reader does not have is how a page becomes noise.
               */}
+            {!agentToken && (
             <details className="card">
                 <summary>The prompt still says &lt;agent-token&gt;, or an agent got a 401</summary>
                 <p className="why">
@@ -343,33 +371,30 @@ MY TOKEN:  <agent-token>
                     callers, three credentials, so any one can be rotated without disturbing the others.
                 </p>
             </details>
-            {/*
-              * DISPLAYED WITH THE PLACEHOLDER, COPIED WITH THE TOKEN. See `agentToken` above for why that
-              * combination is the only one that works: nobody has to know what the token is, the screen is
-              * still safe to show anybody, and the label says which is which so the clipboard is not
-              * quietly different from the page.
-              */}
+            )}
+            {/* THE PROMPT, WITH THE TOKEN IN IT — see `agentToken` above for the three attempts that took.
+                The label drops the word "copy" entirely: the block has a copy button in its own corner, and
+                a label telling you to press the button next to it is a caption on a caption. */}
             <CopyBlock
-                text={prompt}
-                copyText={agentToken ? prompt.split('<agent-token>').join(agentToken) : undefined}
+                text={filledPrompt}
                 label={agentToken
-                    ? 'Paste at the agent — copying fills your token in'
-                    : 'Paste at the agent (CC_AGENT_TOKEN is not set on this hub, so <agent-token> stays)'}
+                    ? 'Paste this at the agent working on the new project'
+                    : 'Paste at the agent — but CC_AGENT_TOKEN is not set on this hub, so fill it in first'}
                 mono={false}
             />
-            <div className="card">
-                <p className="why" style={{ marginTop: 0 }}>
-                    The token is the one thing this page will not fill in for you. It is deliberately not printed
-                    here, because a page that shows its own credentials is a page you cannot leave open — and it
-                    is the same value in every step, so a <code>401</code> at the download means the rest will
-                    fail too and the agent has been told to stop and say so.
-                </p>
-                <p className="why">
-                    Step 6 asks it to explain the conventions back in its own words rather than confirm it read
-                    them — &ldquo;read&rdquo; and &ldquo;understood&rdquo; are different claims and only one of
-                    them is checkable.
-                </p>
-            </div>
+            {/*
+              * A CARD WAS DELETED HERE, and it was worse than clutter — it was a contradiction on screen.
+              *
+              * It read: *"The token is the one thing this page will not fill in for you. It is deliberately not
+              * printed here, because a page that shows its own credentials is a page you cannot leave open."*
+              * Directly beneath a prompt that now prints it. Rendering the page is what found this; nothing in
+              * the diff of the block above it points at a paragraph three hundred lines away that describes the
+              * old behaviour.
+              *
+              * The second half of that card explained why step 6 asks the agent to restate the conventions in
+              * its own words. True, and it is reasoning about the prompt rather than an instruction to a
+              * reader — so it belongs in the file that composes the prompt, and `prompt` above carries it.
+              */}
 
             {/*
               * The raw commands, DELIBERATELY BEHIND A DISCLOSURE and deliberately in two flavours. See the
