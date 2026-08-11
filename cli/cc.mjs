@@ -66,6 +66,22 @@ import { join } from 'node:path';
 const CONFIG_DIR = join(homedir(), '.command-center');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
+/**
+ * WHICH VERSION OF THIS FILE THIS IS. Sent on every sync so the hub can say when it is stale.
+ *
+ * THE FAILURE THIS EXISTS FOR HAPPENED. The hub serves this file from `/api/agent/cc.mjs` so the two cannot
+ * drift — but the download lands at `~/.command-center/cc.mjs` and is a COPY from then on. A hub deployed
+ * with three new hooks and a `cc report` command met a machine running a CLI from before any of it existed,
+ * and nothing errored, nothing warned, and the owner found out by looking at an empty chart.
+ *
+ * `lib/cliversion.ts` declares the same number for the hub's side and carries the history of what each bump
+ * meant. It cannot be imported here — this file has zero dependencies on purpose, which is what lets it run
+ * on a machine with nothing on it — so `tests/prove-hooks.mjs` asserts the two are equal instead.
+ *
+ * BUMP IT when this file gains something a hub relies on: a subcommand, a hook, a changed payload.
+ */
+const CLI_VERSION = 2;
+
 /*
  * Config lives in the HOME directory, never in a project.
  *
@@ -214,6 +230,22 @@ function renderSync(s) {
     }
 
     /*
+     * A STALE CLI IS SAID BEFORE ANYTHING ELSE, above even the defaulted questions.
+     *
+     * Not because it is more consequential than a decision made without the human, but because it changes
+     * whether the rest of this output can be trusted to be complete. An old CLI writes fewer hooks than the
+     * hub expects, so the hub is missing observations it does not know it is missing — and everything below
+     * is a report about what the hub knows.
+     *
+     * `cli_stale` is absent from an older hub's response, so `if (s.cli_stale)` is also the compatibility
+     * check: an old hub says nothing and this line does not appear.
+     */
+    if (s.cli_stale) {
+        out.push(`!! ${s.cli_advice}`);
+        out.push('');
+    }
+
+    /*
      * Defaulted questions come FIRST and are stated loudly.
      *
      * This is the one message an agent must never skim past: a decision was made without the human
@@ -351,6 +383,15 @@ switch (cmd) {
         const qs = new URLSearchParams();
         if (since != null) qs.set('since', since);
         if (project) qs.set('project', project);
+        /*
+         * THE VERSION HANDSHAKE, and `sync` is the right place for it because it is the one command agents
+         * run constantly — several times a session, by instruction. A check on `health` would fire once per
+         * machine setup, which is exactly when the CLI is newest and the check is worthless.
+         *
+         * A query parameter rather than a header so it shows up in a request log and in `--json` output;
+         * there is nothing sensitive about a version number.
+         */
+        qs.set('cli', String(CLI_VERSION));
         const r = await api(`/api/agent/sync${qs.size ? `?${qs}` : ''}`, { cfg });
         process.stdout.write((flags.has('--json') ? JSON.stringify(r, null, 2) : renderSync(r)) + '\n');
         break;

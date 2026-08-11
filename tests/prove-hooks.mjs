@@ -33,7 +33,8 @@
  * No browser, no database, no dev server. Runs in a few seconds.
  */
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,9 +105,9 @@ function stubHub({ notified = true, plan = ['allowed'], expiresInMs = 600_000 } 
 }
 
 /** Run `cc <args>` with a payload on stdin, against a given hub. Returns stdout, stderr and the code. */
-function runCc(args, { stdin = '', url, env = {} } = {}) {
+function runCc(args, { stdin = '', url, env = {}, cli = CLI } = {}) {
     return new Promise(res => {
-        const child = spawn(process.execPath, [CLI, ...args], {
+        const child = spawn(process.execPath, [cli, ...args], {
             env: {
                 ...process.env,
                 CC_URL: url,
@@ -334,6 +335,84 @@ await check('a heartbeat that cannot identify itself sends nothing', async () =>
  * that is not about a human, and `--quiet` — are asserted too, because both are promises made to somebody
  * setting this up on a machine that is not theirs.
  */
+
+await check('the CLI and the hub declare the SAME version, or the staleness warning is a lie', async () => {
+    /*
+     * ONE NUMBER, TWO FILES, AND THAT IS THE HAZARD. `cli/cc.mjs` may not import anything — zero
+     * dependencies and one file is what lets it run on a machine with nothing on it — so the version it
+     * sends is declared there and the version the hub expects is declared in `lib/cliversion.ts`.
+     *
+     * Two declarations of one number is precisely the drift the whole handshake exists to detect, which
+     * would be a funny way for it to fail. A bump landing in one file and not the other has two outcomes,
+     * both bad: every agent is told it is stale when it is current, or no agent is ever told anything.
+     */
+    const { CLI_VERSION } = await import('../lib/cliversion.ts');
+    const src = readFileSync(CLI, 'utf8');
+    const found = /^const CLI_VERSION = (\d+);/m.exec(src);
+    if (!found) throw new Error('cli/cc.mjs no longer declares CLI_VERSION in a form this can read');
+    eq(Number(found[1]), CLI_VERSION, 'the version cli/cc.mjs sends');
+    return `both declare ${CLI_VERSION}`;
+});
+
+await check('an OLD CLI is told it is old, and a current one is not', async () => {
+    /*
+     * The behaviour, end to end through the real CLI against a stub hub — and both halves, because a
+     * warning that always fires is the same defect as one that never does. The stub echoes the query it
+     * received so this can also assert the version was actually SENT rather than inferred by the hub.
+     */
+    const { CLI_VERSION } = await import('../lib/cliversion.ts');
+    const seen = [];
+    const hub = createServer((req, res) => {
+        seen.push(req.url);
+        const claimed = Number(new URL(req.url, 'http://x').searchParams.get('cli') ?? 0);
+        const body = {
+            ok: true, now: new Date(0).toISOString(), cursor: 1, since: 0, agent: 'prove-hooks',
+            last_sync_at: null, hours_since_last_sync: null, changed: [], more: false,
+            counts: { open_tasks: 0, open_questions: 0, blocked_tasks: 0 },
+            open_tasks: [], open_questions: [], defaulted_questions: [], notes: [], scope: null,
+        };
+        if (claimed < CLI_VERSION) {
+            body.cli_stale = true;
+            body.cli_advice = 'The CLI on this machine is older than the hub. Two commands, in this order:';
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(body));
+    });
+    await new Promise(r => hub.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${hub.address().port}`;
+
+    const current = await runCc(['sync'], { url });
+    /* The real CLI sends its own constant, so a current CLI must NOT be warned. If this half ever fails, the
+     * two declarations have drifted and the check above says which way. */
+    if (/older than the hub/.test(current.out)) {
+        throw new Error(`a current CLI was told it is stale:\n${current.out}`);
+    }
+    if (!seen.some(u => u.includes(`cli=${CLI_VERSION}`))) {
+        throw new Error(`the CLI did not send its version. Saw: ${seen.join(', ')}`);
+    }
+
+    /*
+     * THE INJECTION: a COPY of the real file with its constant lowered, rather than an env override.
+     *
+     * A `CC_FORCE_CLI_VERSION` lever would be production code that exists only for this check, and a lever
+     * that makes a CLI misreport its own version is a footgun sitting next to the thing it tests. Rewriting
+     * one line of a copy exercises the same code path with no lever to leave behind — and it fails if the
+     * declaration stops being a single readable line, which is the only assumption the check above makes.
+     */
+    const oldCli = join(tmpdir(), `cc-stale-${CLI_VERSION}.mjs`);
+    const lowered = readFileSync(CLI, 'utf8')
+        .replace(/^const CLI_VERSION = \d+;/m, 'const CLI_VERSION = 1;');
+    if (!/^const CLI_VERSION = 1;/m.test(lowered)) {
+        throw new Error('could not lower the version in a copy, so this proves nothing');
+    }
+    writeFileSync(oldCli, lowered);
+    const stale = await runCc(['sync', '--since', '0'], { url, cli: oldCli });
+    await new Promise(r => hub.close(r));
+    rmSync(oldCli, { force: true });
+    return /older than the hub/.test(stale.out)
+        ? 'a current CLI is silent; a stale one is told, with the two commands'
+        : (() => { throw new Error(`a stale CLI was not warned:\n${stale.out}`); })();
+});
 
 await check('the run gap is LARGER than the live window, which is the load-bearing relationship',
     async () => {

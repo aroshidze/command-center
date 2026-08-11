@@ -1,5 +1,6 @@
 import { requireAgent } from '../../../../lib/auth';
 import { sync } from '../../../../lib/store';
+import { CLI_VERSION, cliStaleAdvice } from '../../../../lib/cliversion';
 import { fail, json } from '../../../../lib/http';
 
 export const dynamic = 'force-dynamic';
@@ -31,7 +32,38 @@ export async function GET(req: Request) {
         }
         // `?project=slug` narrows to one project. Omitted means everything, which is what the hub's own
         // page and any cross-project tooling wants.
-        return json(await sync(agent, since, params.get('project')));
+        const body = await sync(agent, since, params.get('project'));
+
+        /*
+         * ==================================================================================================
+         * IS THE CLI ON THAT MACHINE OLDER THAN THIS HUB? Answered here, on the one call agents make often.
+         * ==================================================================================================
+         *
+         * The hub serves its own CLI so the two cannot drift, and that only covers the download: the file is
+         * a copy from then on. A hub deployed with `cc report` and three new hooks met a machine whose CLI
+         * predated all of it, and the only symptom was a chart with nothing on it. See lib/cliversion.ts.
+         *
+         * ABSENT MEANS OLD, NOT EXEMPT. A CLI that sends no `cli` at all is by definition from before this
+         * handshake existed, so it is stale by exactly the reasoning this check is for. Treated as 0.
+         *
+         * NEWER THAN THE HUB IS FINE AND SILENT. That is somebody testing an unreleased CLI against a
+         * deployed hub, which is a thing this project's own author does; a warning there would be noise
+         * about the one case where the person already knows.
+         */
+        const claimed = Number(params.get('cli') ?? 0);
+        const theirs = Number.isFinite(claimed) ? claimed : 0;
+        if (theirs < CLI_VERSION) {
+            const url = new URL(req.url);
+            const hub = process.env.CC_PUBLIC_URL || `${url.protocol}//${url.host}`;
+            return json({
+                ...body,
+                cli_stale: true,
+                cli_expected: CLI_VERSION,
+                cli_seen: theirs,
+                cli_advice: cliStaleAdvice(hub.replace(/\/+$/, '')),
+            });
+        }
+        return json(body);
     } catch (e) {
         return fail(e);
     }

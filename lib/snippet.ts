@@ -238,12 +238,19 @@ believing the channel works and believing it does not. When you do find a note, 
 note that was collected and ignored is worse than one that was never collected, because the hub told him it
 had been picked up.
 
-### Four things he can switch on, and they are OFF unless he asks
+### Four things that are OFF until a command is run — and the first one belongs in onboarding
 
-These are **opt-in per project and off by default**, and nothing below happens unless somebody runs the
-command. A project that runs none of them behaves exactly as this document has described so far. **Do not
-turn any of them on unprompted** — the second one in particular changes what a link to the hub can do, and
-that is his call rather than yours.
+Nothing below happens unless somebody runs the command, and a project that runs none of them behaves exactly
+as this document has described so far.
+
+**The first one is different from the other three and the difference matters.** Activity reporting grants
+nothing, reveals nothing to anybody who could not already read the hub, and is the only reason the hub can
+show anything about a project at all — so **run it when you connect a project** rather than waiting to be
+asked. This document used to say the opposite, and the result was a hub with ten projects on it, nine of which
+could never draw a single run: the product worked and looked broken.
+
+**The other three, do not turn on unprompted.** Number two in particular changes what a link to the hub can
+do, and that is his call rather than yours.
 
 If he asks for any of them, run the command in that project's folder. Each writes hooks into
 \`.claude/settings.json\` and **no token goes into that file**, so it is safe to commit. Add \`--dry\` to see
@@ -254,6 +261,13 @@ what would change, and \`off\` undoes it.
 \`\`\`bash
 node "$HOME/.command-center/cc.mjs" presence on
 \`\`\`
+
+**THIS ONE IS PART OF ONBOARDING A PROJECT, not something to wait to be asked for** — and that is a change
+from what this document used to say. Without it the hub knows the project exists and **can never show a single
+run in it**: ten projects were connected to this hub and nine of them could not appear on the chart, which
+made a working product look broken. If you have just connected a project, run it. It grants nothing and can be
+undone with \`presence off\`; the only thing to check first is whether he wants message text sent, and
+\`presence on --no-words\` is the answer if not.
 
 Nine hooks, doing three jobs.
 

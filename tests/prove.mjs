@@ -942,7 +942,19 @@ await check('the snippet every project gets covers every agent-facing behaviour'
          *   - that a held call is neither a task nor a question, so `cc ask` is still the way to get a decision
          *   - that `approvals on` widens what a link to the hub can do, which is his call to make
          */
-        ['the opt-in features being off by default', 'off by default'],
+        /*
+         * THIS ROW USED TO LOOK FOR "off by default", AND THE CONTRACT CHANGED UNDER IT.
+         *
+         * All four features were off until asked for, and activity reporting has been moved into onboarding
+         * — because the old rule produced a hub with ten projects on it, nine of which could never draw a
+         * single run. The product worked and looked broken, and its owner reasonably concluded the second.
+         *
+         * So the property an agent must know is no longer "they are all off". It is the SPLIT: run the
+         * activity hooks when you connect a project, and do not touch the other three unprompted. Two rows,
+         * because an agent that learns only the first half turns on the permission relay unasked.
+         */
+        ['that activity reporting belongs in onboarding', 'run it when you connect a project'],
+        ['that the other three must not be turned on unprompted', 'do not turn on unprompted'],
         ['how to switch presence on', /cc\.mjs"? presence on/],
         ['how to switch the permission relay on', /cc\.mjs"? approvals on/],
         ['how to post per-project spend', /cc\.mjs"? spend/],

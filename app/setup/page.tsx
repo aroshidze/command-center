@@ -173,9 +173,21 @@ MY TOKEN:  <agent-token>
 
    Check the project scope it prints is right. Run it at the start of every session from now on — AND AGAIN DURING THE SESSION. I tick things off away from my desk and the hub is the only way I can tell you, so sync before you tell me you are blocked on me, before you start work that depends on a task you filed, after anything that took real time, and before your closing summary. If the response says "more": true there is another page of history — sync again straight away, and keep going until it is false.
 
-6. Read the Command Center section it just wrote into AGENTS.md — that is the full field reference. Then tell me back, in your own words: what you will use "cc task" for versus "cc ask", what default_option does, and what you will say to me differently depending on whether a filed task reports notified true or false. I want to know you understood it, not that you read it.
+6. Turn on activity reporting for this project, from the project root:
 
-7. Then get on with the actual work. From here: anything needing my account, my card, my phone or my physical presence becomes a "cc task" with a required verify line. Anything you are blocked on becomes a "cc ask" with 2-4 options plus default_option and hours, so you are never stuck waiting for me. Never write task lists into chat — they scroll away. Never put a secret in a task; the hub refuses credential-shaped values by rule, so say where the value lives instead.`;
+     node <that cc.mjs path> presence on
+
+   This is what makes the hub able to show what is happening here at all: nine hooks in this project's .claude/settings.json, no token in the file. Without it the hub knows this project exists and can never show a single run in it. It reports when sessions start and end, what sub-agents you spawn, and — at the end of each of your turns — the last thing you actually said, so I can follow the work from my phone. If I say I would rather no message text left the machine, run it as "presence on --no-words" instead: everything else still works.
+
+   Then fill in what already happened, which needs no hooks and works anywhere:
+
+     node <that cc.mjs path> backfill
+
+   It reads Claude Code's own transcripts on this machine and posts the stretches of work in them, so the hub is not empty about the past. Marked as reconstructed rather than observed, and my page says which.
+
+7. Read the Command Center section it just wrote into AGENTS.md — that is the full field reference. Then tell me back, in your own words: what you will use "cc task" for versus "cc ask", what default_option does, and what you will say to me differently depending on whether a filed task reports notified true or false. I want to know you understood it, not that you read it.
+
+8. Then get on with the actual work. From here: anything needing my account, my card, my phone or my physical presence becomes a "cc task" with a required verify line. Anything you are blocked on becomes a "cc ask" with 2-4 options plus default_option and hours, so you are never stuck waiting for me. Never write task lists into chat — they scroll away. Never put a secret in a task; the hub refuses credential-shaped values by rule, so say where the value lives instead.`;
 
     /*
      * THE PROMPT WITH THE TOKEN ALREADY IN IT, which is the only version anybody sees.
@@ -391,7 +403,7 @@ MY TOKEN:  <agent-token>
               * the diff of the block above it points at a paragraph three hundred lines away that describes the
               * old behaviour.
               *
-              * The second half of that card explained why step 6 asks the agent to restate the conventions in
+              * The second half of that card explained why step 7 asks the agent to restate the conventions in
               * its own words. True, and it is reasoning about the prompt rather than an instruction to a
               * reader — so it belongs in the file that composes the prompt, and `prompt` above carries it.
               */}
