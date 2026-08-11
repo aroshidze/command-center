@@ -237,7 +237,89 @@ MY TOKEN:  <agent-token>
                     it, connects the project and syncs. <strong>Every command in it is safe to re-run</strong>, so
                     this is the same prompt whether it is a new machine or your fourth project.
                 </p>
+                {/*
+                  * ==================================================================================
+                  * WHAT THE TOKEN IS, and this paragraph exists because its absence confused the owner
+                  * of this hub — the person who has read every other word on this page.
+                  * ==================================================================================
+                  *
+                  * His words: *"what is the CC agent token? I'm very confused, don't know what to
+                  * write.. and other users will probably be confused too"*. He is right on both counts,
+                  * and the failure is specific and worth naming rather than just patching: this page
+                  * mentioned `CC_AGENT_TOKEN` exactly ONCE, in the sentence telling you to replace it,
+                  * and the paragraph below it explained at length **why it would not print the value**
+                  * without ever saying what the value IS. A justification for withholding something is
+                  * not a definition of it.
+                  *
+                  * `docs/SETUP.md` does explain it — in step 1 of deploying your own hub, which is the
+                  * one document nobody re-reads three weeks later when they add a fourth project. The
+                  * explanation has to be where the confusion is.
+                  *
+                  * THE ONE SENTENCE THAT ANSWERS IT: nobody issued it to you. Not Anthropic, not Vercel,
+                  * not Neon. You generated a random string when you deployed this hub and pasted it into
+                  * an environment variable. That is the whole concept, and it is the bit that is
+                  * genuinely surprising — every other credential in this stack was handed to you by a
+                  * service, so the reasonable assumption is that this one was too, and then you go
+                  * looking for a dashboard that does not exist.
+                  */}
+                <p className="why">
+                    <strong>Not sure what that is?</strong> It is a password you invented, not one anybody
+                    issued you: a random string you generated when you deployed this hub and pasted into
+                    its environment variables as <code>CC_AGENT_TOKEN</code>. Its only job is to prove that
+                    whatever is calling <code>/api/agent/…</code> is allowed to. Agents use it constantly;
+                    you should almost never have to type it.
+                </p>
+                <p className="why">
+                    {/*
+                      * `{' '}` RATHER THAN A PLAIN SPACE, and it is not superstition: rendered, this
+                      * paragraph came out as "Where yours is:in your hosting provider" while the
+                      * paragraph above it — written in what looks like exactly the same shape — kept its
+                      * space. I did not work out which whitespace rule separates the two cases, so this
+                      * uses the explicit form the rest of this file already uses fourteen times, which
+                      * cannot be collapsed by any of them.
+                      */}
+                    <strong>Where yours is:</strong>{' '}
+                    in your hosting provider&rsquo;s environment variables for this project, and in{' '}
+                    <code>.env.local</code> if you also run the hub on your own machine. It is the same
+                    value in every step of the prompt below.
+                </p>
             </div>
+            {/*
+              * THE RECOVERY PATH, behind a disclosure — because it is the long half and most people do not
+              * need it, but the people who do need it are stuck until they find it.
+              *
+              * Rotating this token is not free and the consequence is stated rather than discovered: every
+              * machine already configured holds the OLD value in ~/.command-center/config.json, so each one
+              * needs `cc setup` run again. Leaving that out would turn a two-minute fix into an afternoon of
+              * agents failing with 401 on a hub that looks healthy.
+              */}
+            <details className="card">
+                <summary>I have lost it, or it was set as a hidden value I cannot read back</summary>
+                <p className="why">
+                    Most hosting providers let you mark a variable as sensitive, which means you can set it
+                    and never read it again. If that is where yours is, you do not recover it — you replace
+                    it. Generate a new one:
+                </p>
+                <CopyBlock
+                    text={'node -e "console.log(require(\'crypto\')'
+                        + '.randomBytes(32).toString(\'base64url\'))"'}
+                    label="anywhere with node installed"
+                />
+                <p className="why">
+                    Set that as <code>CC_AGENT_TOKEN</code>, redeploy, and use the new value below.{' '}
+                    <strong>One consequence, worth knowing before you do it:</strong> every machine you have
+                    already set up holds the old value in{' '}
+                    <code>~/.command-center/config.json</code>, so each of those needs{' '}
+                    <code>cc setup</code> run again with the new token. Until then those agents get a{' '}
+                    <code>401</code> from a hub that is otherwise perfectly healthy.
+                </p>
+                <p className="why">
+                    It must be at least 24 characters, or the hub treats it as unset and refuses every agent
+                    request rather than accepting a weak one. And keep it different from{' '}
+                    <code>CC_WEB_TOKEN</code>, which is the separate value that unlocks this page — three
+                    callers, three credentials, so any one can be rotated without disturbing the others.
+                </p>
+            </details>
             <CopyBlock text={prompt} label="Paste at the agent working on the new project" mono={false} />
             <div className="card">
                 <p className="why" style={{ marginTop: 0 }}>
