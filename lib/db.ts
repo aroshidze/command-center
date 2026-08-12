@@ -156,6 +156,15 @@ export interface VerifiedWrite<T> {
     reread: () => Promise<T[]>;
     /** Assert the re-read row really holds what was intended. Return null if fine, else the reason. */
     expect: (row: T) => string | null;
+    /**
+     * Let the mutation match zero rows without that being a failure.
+     *
+     * For `on conflict … do nothing` only, where an empty result means the row is already there. The re-read
+     * and `expect` still decide the outcome, so this widens what the WRITE may return and never what counts
+     * as verified. Absent everywhere else, deliberately: a zero-row write is the signal that has caught real
+     * defects here.
+     */
+    allowNoRows?: boolean;
 }
 
 /**
@@ -178,7 +187,19 @@ export async function writeVerified<T extends Record<string, unknown>>(
         written = await spec.write();
     }
 
-    if (written.length === 0) {
+    /*
+     * ZERO ROWS IS NORMALLY A FAILURE AND ON ONE PATH IT IS NOT.
+     *
+     * `on conflict … do nothing` returns nothing when the row is already there, which is success — the
+     * database holds the intended state, somebody else put it there. `cc sync` re-posts the same transcript
+     * message on every sync and relies on exactly that.
+     *
+     * IT IS OPT-IN PER WRITE rather than a global relaxation, because "the write matched zero rows" is the
+     * signal that caught real defects in this codebase and must keep failing everywhere else. And the
+     * re-read still runs unconditionally: `allowNoRows` permits the INSERT to do nothing, never the
+     * verification to be skipped, so a caller that sets it still cannot report success over an empty table.
+     */
+    if (written.length === 0 && !spec.allowNoRows) {
         throw new WriteFailed(spec.what, 'the write matched zero rows, so nothing was stored');
     }
     if (written.length > 1) {

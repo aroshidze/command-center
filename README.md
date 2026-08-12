@@ -240,12 +240,44 @@ non-commercial. Where that stops being true is in [docs/RESEARCH.md](docs/RESEAR
 
 ---
 
+## Keeping it up to date
+
+Nothing here phones home, so nothing tells your hub that a new version exists. There are two halves and one of
+them announces itself.
+
+**Your hub — two clicks, and you have to look.** If you forked this repository, GitHub's own **Sync fork**
+button on your fork brings it up to date, and your fork's page says *"This branch is N commits behind"* without
+being asked. Pushing that triggers a redeploy, and **the schema applies itself on deploy** — there is no
+migration to run, ever. If you cloned rather than forked: `git pull upstream main && git push`.
+
+To be told rather than to remember: **Watch → Custom → Releases** on this repository, and GitHub emails you.
+
+**The CLI on each machine — it tells you.** `cc sync` sends the CLI's version, and a hub that is newer answers
+with the two commands needed to catch up. Agents sync several times a session, so a stale CLI announces itself
+within minutes of your hub being updated rather than being discovered weeks later. The second of those two
+commands is the one nobody guesses:
+
+```bash
+# 1. the CLI itself, served by your own hub
+curl -fsSL -H "Authorization: Bearer <your agent token>" <your-hub>/api/agent/cc.mjs \
+  -o "$HOME/.command-center/cc.mjs"
+# 2. and the hooks, because the CLI is what writes them — an old settings file stays old
+node "$HOME/.command-center/cc.mjs" presence on     # in each project folder
+```
+
+Why the second one matters: hooks live in each project's `.claude/settings.json` and are written by the CLI, so
+a new CLI does not change a settings file that already exists. And Claude Code reads a project's hooks **when a
+session starts** — a session that was already running keeps the old set until it is restarted. `cc sync` covers
+that gap by catching the hub up from the transcript, which is why syncing matters more than restarting.
+
+---
+
 ## Connect a project
 
 **Open `/setup` on your own hub and paste the prompt it gives you at an agent.** That is the whole thing: the
-prompt has your hub's URL already in it, you replace one placeholder with your token, and the agent installs the
-CLI if it is missing, configures the machine, checks it, connects the project and syncs. Every command in it is
-safe to re-run, so it is the same prompt on a bare machine and on your fourth project.
+prompt has your hub's URL and your token already in it, and the agent installs the CLI if it is missing,
+configures the machine, checks it, connects the project, turns on activity reporting and syncs. Every command in
+it is safe to re-run, so it is the same prompt on a bare machine and on your fourth project.
 
 By hand, if you prefer — **the hub serves its own CLI**, so this needs no clone and no `npm`:
 

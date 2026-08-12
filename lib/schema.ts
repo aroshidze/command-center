@@ -308,6 +308,22 @@ export const SCHEMA_STATEMENTS: string[] = [
     /* The two reads that exist: the newest per project, and one project's thread. Both are covered. */
     `create index if not exists reports_project_idx on reports (project, at desc)`,
     `create index if not exists reports_session_idx on reports (project, session, at desc)`,
+    /*
+     * IDEMPOTENCE FOR REPORTS THAT CARRY THEIR OWN TIMESTAMP.
+     *
+     * A hook reports once, as it happens, and `at` defaults to now — nothing to collide with. But `cc sync`
+     * now also catches up from the transcript for a session whose hooks were installed after it started
+     * (they are read at session start, so such a session can never report on its own). That catch-up runs
+     * every sync, which is several times a session, and it re-reads the SAME last message each time.
+     *
+     * Without this index the thread would fill with the same paragraph over and over. With it, a repeat is a
+     * no-op: one row per moment per kind per conversation, which is exactly what the truth is.
+     *
+     * `at` is part of the key rather than a `where` clause, because two different things genuinely said at
+     * the same millisecond in the same session is not a thing that happens, and a re-post of the same
+     * message always carries the same `at` — it comes from the transcript, not from the clock.
+     */
+    `create unique index if not exists reports_moment_uniq on reports (project, session, kind, at)`,
 
     /* ------------------------------------------------------------------------------------------
      * SPEND — TOKENS, never money. The money is a fold over these numbers and a price table that

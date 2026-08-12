@@ -1616,6 +1616,17 @@ export interface ReportInput {
     body?: unknown;
     branch?: unknown;
     model?: unknown;
+    /**
+     * WHEN IT WAS SAID, when that is not now.
+     *
+     * A hook reports as it happens and omits this. `cc sync`'s catch-up reads a transcript and knows the real
+     * moment, so it sends it — which is both more honest and what makes a re-post idempotent: the same
+     * message always carries the same `at`, and `reports_moment_uniq` turns the repeat into a no-op.
+     *
+     * Clamped to the past by `pastInstant`. A machine with a fast clock must not be able to file something
+     * that has not been said yet.
+     */
+    at?: unknown;
 }
 
 const REPORT_KINDS: ReportKind[] = ['said', 'told', 'waiting'];
@@ -1733,18 +1744,48 @@ export async function recordReport(
     }
 
     const id = newReportId();
+    /*
+     * A GIVEN MOMENT MAKES THE WRITE IDEMPOTENT, and the re-read is keyed on the moment rather than on the id.
+     *
+     * `cc sync` catches up from the transcript on every sync, so it re-posts the same last message several
+     * times a session. `on conflict do nothing` makes the repeat harmless, and the verification then has to
+     * look for the ROW THAT MOMENT PRODUCED rather than for the id this call generated — the row that is
+     * there may be the one an earlier sync wrote, which is success and not failure.
+     *
+     * Without a moment (a hook, reporting as it happens) nothing can collide, so the id is the key and the
+     * insert is plain. Two paths, because one of them must never silently swallow a real write.
+     */
+    const at = input.at == null || input.at === '' ? null : pastInstant(input.at, 'at').toISOString();
     await writeVerified<Row>({
         what: `record what was said in ${proj}`,
-        write: () => sql()`
-            insert into reports (id, project, agent, session, kind, body)
-            values (${id}, ${proj}, ${agent}, ${conversation}, ${kind}, ${body})
-            returning *
-        ` as Promise<Row[]>,
-        reread: () => sql()`select * from reports where id = ${id}` as Promise<Row[]>,
+        write: () => (at
+            ? sql()`
+                insert into reports (id, project, agent, session, kind, body, at)
+                values (${id}, ${proj}, ${agent}, ${conversation}, ${kind}, ${body}, ${at})
+                on conflict (project, session, kind, at) do nothing
+                returning *
+              `
+            : sql()`
+                insert into reports (id, project, agent, session, kind, body)
+                values (${id}, ${proj}, ${agent}, ${conversation}, ${kind}, ${body})
+                returning *
+              `) as Promise<Row[]>,
+        /* `allowNoRows` on the conflict path: a repeat writes nothing, and the re-read below is what decides
+         * whether the intended row is in the database. */
+        allowNoRows: at != null,
+        reread: () => (at
+            ? sql()`
+                select * from reports
+                 where project = ${proj} and session = ${conversation} and kind = ${kind} and at = ${at}
+              `
+            : sql()`select * from reports where id = ${id}`) as Promise<Row[]>,
         expect: r => {
             if (String(r.project) !== proj) return `project is "${String(r.project)}"`;
             if (String(r.kind) !== kind) return `kind is "${String(r.kind)}"`;
-            if ((r.body == null ? null : String(r.body)) !== body) {
+            /* On the conflict path the stored body is whichever post got there first, and comparing it to
+             * this call's text would fail on a re-post whose message had since been edited upstream — which
+             * cannot happen for a transcript, but the check would be asserting something it does not know. */
+            if (at == null && (r.body == null ? null : String(r.body)) !== body) {
                 return 'the stored text is not what was sent';
             }
             return null;

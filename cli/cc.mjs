@@ -80,7 +80,7 @@ const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
  *
  * BUMP IT when this file gains something a hub relies on: a subcommand, a hook, a changed payload.
  */
-const CLI_VERSION = 3;
+const CLI_VERSION = 4;
 
 /**
  * ==================================================================================================
@@ -137,6 +137,161 @@ function projectRoot(from) {
 /** The project slug for a working directory: the root's folder name, slugified the one way. */
 function projectFrom(cwd) {
     return slugify(projectRoot(cwd).split(/[\\/]/).filter(Boolean).pop() || '');
+}
+
+/**
+ * ==================================================================================================
+ * CATCH THE HUB UP FROM THE TRANSCRIPT — the half that works when the hooks cannot.
+ * ==================================================================================================
+ *
+ * THE PROBLEM THIS SOLVES IS STRUCTURAL AND HOOKS CANNOT SOLVE IT. Claude Code reads a project's hooks
+ * when a session STARTS. So a session that was already running when `cc presence on` was run will never
+ * report anything, for as long as it lives — and his sessions live for days. He watched a project he was
+ * actively working in show *"Nothing has looked at gamblango since 11 Aug"* and a latest word 20 hours old,
+ * and asked the right question: *"How can we make sure it always works?"*
+ *
+ * Not with a hook. Whatever we install is read at the start of a session that has already started.
+ *
+ * WHAT DOES ALWAYS WORK IS AN AGENT RUNNING A COMMAND. `cc sync` is the command the snippet instructs
+ * agents to run at the start of every session AND several times during it. So the sync itself carries the
+ * catch-up: it reads the transcript Claude Code is writing anyway and posts what it finds. No hooks, no
+ * restart, no new event, and it self-heals — every sync makes the hub current again.
+ *
+ * WHAT IT POSTS, AND WHY EACH IS DEFENSIBLE
+ *
+ *   - a heartbeat, so presence stops saying nothing has looked at a project somebody is working in. Sent
+ *     only when the transcript was written to in the last fifteen minutes, because that is the evidence:
+ *     a file that changed a minute ago is a session that is alive.
+ *   - the last thing the assistant said, with ITS OWN timestamp from the transcript rather than now. The
+ *     hub's unique index makes a re-post a no-op, which matters because this runs on every sync and reads
+ *     the same message until a new one is written.
+ *
+ * IT NEVER FAILS A SYNC. The sync is the call an agent depends on for its catch-up; this is a decoration on
+ * a diagnostic, exactly like `notePresenceFromSync` on the hub's side. Every failure path here is a line on
+ * stderr and a return.
+ */
+async function catchUpFromTranscript(project, cfg) {
+    const base = join(homedir(), '.claude', 'projects');
+    let dirs;
+    try {
+        const { readdirSync } = await import('node:fs');
+        dirs = readdirSync(base);
+    } catch { return null; }
+
+    const { readdirSync, statSync } = await import('node:fs');
+    /*
+     * FILTER TO THIS PROJECT FIRST, THEN TAKE THE NEWEST — and the first version had it the other way round,
+     * which broke it completely in the most confusing way possible.
+     *
+     * It took the newest transcript on the whole MACHINE and then checked whether it belonged to this
+     * project. The newest transcript on a machine running this hub is almost always the session doing the
+     * hub work, so a sync from any other project found a transcript that failed the check and returned
+     * nothing. Tested against the live hub from a project whose transcript was seven minutes old: silence.
+     *
+     * Candidates are sorted newest first and examined until one matches, capped at eight. The directory name
+     * is a cheap hint — Claude Code names it after the path, so `d--Antigravity-GAMBLANGO` slugifies to
+     * something ending in `gamblango` — but it is only a hint: `cwd` inside the file is what decides, because
+     * the naming is the harness's business and could change.
+     */
+    const candidates = [];
+    for (const d of dirs) {
+        const dir = join(base, d);
+        /* Hint, not a rule. A directory whose name cannot contain this project is skipped without a stat;
+         * anything else is considered and confirmed by reading `cwd` below. */
+        const hint = slugify(d).endsWith(project);
+        let files;
+        try { files = readdirSync(dir).filter(f => f.endsWith('.jsonl')); } catch { continue; }
+        for (const f of files) {
+            try {
+                const st = statSync(join(dir, f));
+                /*
+                 * A SIX-HOUR FLOOR ON WHAT IS WORTH OPENING. Older than that and this is history, which is
+                 * `cc backfill`'s job and not something to redo on every sync.
+                 */
+                if (Date.now() - st.mtimeMs > 6 * 3600e3) continue;
+                candidates.push({
+                    path: join(dir, f), mtimeMs: st.mtimeMs, hint,
+                    session: f.replace(/\.jsonl$/, ''),
+                });
+            } catch { /* a file that vanished between readdir and stat */ }
+        }
+    }
+    /* Hinted directories first, then by recency. So the common case reads exactly one file. */
+    candidates.sort((a, b) => (b.hint ? 1 : 0) - (a.hint ? 1 : 0) || b.mtimeMs - a.mtimeMs);
+
+    let best = null;
+    let said = null;
+    let saidAt = null;
+    for (const c of candidates.slice(0, 8)) {
+        /*
+         * THE TAIL, NOT THE FILE. These reach fifty megabytes and this runs on every sync. 256 KB covers many
+         * messages and costs one seek — the same decision `modelFromTranscript` above already makes.
+         */
+        let text;
+        try {
+            const size = statSync(c.path).size;
+            const want = Math.min(size, 256 * 1024);
+            const fd = openSync(c.path, 'r');
+            const buf = Buffer.alloc(want);
+            readSync(fd, buf, 0, want, size - want);
+            closeSync(fd);
+            text = buf.toString('utf8');
+        } catch { continue; }
+
+        /*
+         * THE FIRST LINE IS PROBABLY A FRAGMENT, because the read started mid-file. Dropped rather than
+         * parsed: a half line of JSON is not a message, and guessing at one is how a reconstruction starts
+         * inventing.
+         */
+        let cwd = null;
+        let text_ = null;
+        let at = null;
+        for (const line of text.split('\n').slice(1)) {
+            if (!line) continue;
+            let m;
+            try { m = JSON.parse(line); } catch { continue; }
+            if (m.cwd) cwd = m.cwd;
+            /* The assistant's own text, from the harness's own record. Content is an array of blocks and only
+             * the text ones are words; a turn that was all tool calls has nothing to quote and is skipped. */
+            if (m.type === 'assistant' && m.message && Array.isArray(m.message.content)) {
+                const t = m.message.content
+                    .filter(b => b && b.type === 'text').map(b => b.text).join('\n').trim();
+                if (t) { text_ = t; at = m.timestamp || null; }
+            }
+        }
+        /* `cwd` DECIDES. Posting another project's words under this project's name is exactly how the
+         * phantom-project defect worked, and this is the same mistake one layer along. */
+        if (!cwd || projectFrom(cwd) !== project) continue;
+        best = c;
+        said = text_;
+        saidAt = at;
+        break;
+    }
+    if (!best) return null;
+
+    const alive = Date.now() - best.mtimeMs < 15 * 60e3;
+    let posted = 0;
+    if (alive) {
+        try {
+            await api('/api/agent/presence', {
+                method: 'POST',
+                body: { project, session: best.session, model: modelFromTranscript(best.path) || null },
+                cfg,
+            });
+            posted++;
+        } catch (e) { process.stderr.write(`cc sync: could not refresh presence (${e.message.split('\n')[0]})\n`); }
+    }
+    if (said && saidAt) {
+        try {
+            const r = await api('/api/agent/report', {
+                method: 'POST',
+                body: { project, session: best.session, kind: 'said', body: said, at: saidAt },
+                cfg,
+            });
+            if (r?.saved) posted++;
+        } catch (e) { process.stderr.write(`cc sync: could not post the last word (${e.message.split('\n')[0]})\n`); }
+    }
+    return posted ? { alive, session: best.session, said: !!said } : null;
 }
 
 /**
@@ -460,6 +615,27 @@ switch (cmd) {
         qs.set('cli', String(CLI_VERSION));
         const r = await api(`/api/agent/sync${qs.size ? `?${qs}` : ''}`, { cfg });
         process.stdout.write((flags.has('--json') ? JSON.stringify(r, null, 2) : renderSync(r)) + '\n');
+
+        /*
+         * AND THEN CATCH THE HUB UP, because a hook cannot. See `catchUpFromTranscript`: Claude Code reads a
+         * project's hooks when a session STARTS, so a session that was already running when they were
+         * installed reports nothing for its whole life — and a session here lives for days. Every sync makes
+         * the hub current again, which is the only mechanism that self-heals.
+         *
+         * AFTER the sync output, never before it, and awaited rather than fired and forgotten: the sync's own
+         * answer is what the agent is waiting for, and a stray line appearing above it would read as part of
+         * the response. Skipped for `--all`, which has no one project to catch up, and by `--no-catchup` for
+         * anybody who wants the old behaviour.
+         */
+        if (project && !flags.has('--no-catchup')) {
+            const caught = await catchUpFromTranscript(project, cfg);
+            if (caught && !flags.has('--json')) {
+                process.stdout.write(
+                    `  (told the hub this session is live${caught.said ? ' and what it last said' : ''}, `
+                    + 'read from the transcript)\n',
+                );
+            }
+        }
         break;
     }
 

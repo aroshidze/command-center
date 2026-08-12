@@ -66,6 +66,15 @@ export async function POST(req: Request) {
                 body: body.body,
                 branch: body.branch,
                 model: body.model,
+                /*
+                 * WHEN IT WAS SAID, when the caller knows better than the clock.
+                 *
+                 * A hook omits it and `now()` is right. `cc sync`'s catch-up reads a transcript and sends the
+                 * message's real timestamp, which is both more honest and what makes the re-post idempotent —
+                 * the same message always carries the same `at`, and a unique index turns the repeat into a
+                 * no-op. Clamped to the past in `recordReport`, so a fast clock cannot file the future.
+                 */
+                at: body.at,
             },
             agent,
         );

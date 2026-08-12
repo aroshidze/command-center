@@ -43,8 +43,13 @@
  *      subfolder — a real hub grew a phantom project called `reports` from
  *      `GAMBLANGO/orchestrator/research/reports`, complete with a page and a "latest word". This is the
  *      bump that most deserves the warning: the damage is silent, it looks like data, and it accumulates.
+ *   4  13 August 2026. `cc sync` catches the hub up from the transcript — a heartbeat and the last thing the
+ *      assistant said, with its own timestamp. This is the one that makes the hub work WITHOUT hooks, and it
+ *      exists because hooks cannot solve the problem it solves: Claude Code reads a project's hooks when a
+ *      session starts, so a session already running when they were installed can never report, and sessions
+ *      here live for days. A CLI at 3 leaves such a project looking abandoned while somebody works in it.
  */
-export const CLI_VERSION = 3;
+export const CLI_VERSION = 4;
 
 /**
  * What a hub tells an agent whose CLI is older than it expects.
