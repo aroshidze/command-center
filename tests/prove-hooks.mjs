@@ -33,7 +33,7 @@
  * No browser, no database, no dev server. Runs in a few seconds.
  */
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
@@ -335,6 +335,48 @@ await check('a heartbeat that cannot identify itself sends nothing', async () =>
  * that is not about a human, and `--quiet` — are asserted too, because both are promises made to somebody
  * setting this up on a machine that is not theirs.
  */
+
+await check('a hook fired from a SUBFOLDER reports the project, not the subfolder', async () => {
+    /*
+     * THE DEFECT THIS EXISTS FOR INVENTED A PROJECT. An agent working in
+     * `GAMBLANGO/orchestrator/research/reports` fired hooks whose project was the last path segment, so a
+     * real hub grew a project called `reports` with a page, a run and a "latest word" — and none of it
+     * existed. His words: *"NO SUCH PROJECT!"*
+     *
+     * Agents change directory constantly, and with a report hook on every turn each subdirectory was one turn
+     * from becoming a phantom. The same wrong one-liner had been copied to eight call sites, which is why it
+     * broke everywhere at once and why the fix is a single `projectFrom`.
+     *
+     * MEASURED THROUGH THE REAL CLI, from a real nested directory inside this repository — `tests/shots` is
+     * three levels down and has no marker of its own, and this repo's root has both `.git` and `.claude`.
+     * Asserting the payload's `project` rather than any intermediate: the hub only ever sees that.
+     */
+    /*
+     * THE GUARD COMES BEFORE THE SERVER, and the first version of this check had it the other way round.
+     *
+     * `existsSync` was not imported, so the line below threw — past the close of the stub hub. Every check
+     * still reported ok and then the PROCESS NEVER EXITED, because an open HTTP server keeps Node's event
+     * loop alive. A suite that hangs after going green is worse than one that fails: it reads as a slow
+     * machine, and two runs were killed by a timeout before I looked at why. Nothing that has to be closed
+     * is opened until the check knows it has a subject.
+     */
+    const nested = join(root, 'tests', 'shots');
+    if (!existsSync(nested)) return 'NOT MEASURED — no nested directory to fire from';
+    const hub = await stubHub();
+    await runCc(['report', '--said'], {
+        stdin: JSON.stringify({
+            session_id: 'sess-nested', cwd: nested, hook_event_name: 'Stop',
+            last_assistant_message: 'fired from three levels down',
+        }),
+        url: hub.url,
+    });
+    await hub.close();
+    const body = hub.seen.bodies[0];
+    if (!body) throw new Error('nothing was posted at all');
+    eq(body.project, 'thecommandcenter', 'the project a hook fired from a subfolder reports');
+    if (body.project === 'shots') throw new Error('the subfolder became the project — the phantom is back');
+    return `fired from tests/shots and reported "${body.project}"`;
+});
 
 await check('the CLI and the hub declare the SAME version, or the staleness warning is a lie', async () => {
     /*

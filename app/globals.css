@@ -1425,11 +1425,21 @@
         box-shadow: inset 3px 0 0 0 var(--proj, transparent);
     }
     .runlane:first-child { border-top: 0; }
+    /*
+     * `align-self: center` and `display: block` because this is an ANCHOR now rather than a span: a lane can
+     * be several packing rows tall, and an inline element in a flex row would sit on the first line while the
+     * track beside it runs the full height. The `.aslink` colour rules come from the shared class; the
+     * ellipsis truncation stays here, and it has a route — the link opens the project whose name is cut.
+     */
     .runname {
-        flex: 0 0 var(--runname-w); min-width: 0;
+        flex: 0 0 var(--runname-w); min-width: 0; display: block; align-self: center;
         font-size: var(--t-sm); color: var(--dim); letter-spacing: var(--track-md);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+    /* The shared link rule resolves `color: inherit`, which on a lane name would inherit the lane's own
+       colour rather than `--dim`. Restated so the two lists of project names look identical. */
+    a.runname { color: var(--dim); }
+    a.runname:hover { color: var(--text); }
 
     /*
      * The track's height is a FUNCTION OF HOW MANY ROWS THE LANE NEEDS, and the packing that decides
@@ -1792,6 +1802,52 @@
         grid-column: 1 / -1; margin: 2px 0 0; color: var(--text); font-size: var(--t-md);
         white-space: pre-wrap; line-height: var(--lh-body);
     }
+
+    /*
+     * ==========================================================================================
+     * A LONG MESSAGE IS CLAMPED WITH A WAY TO OPEN IT — never clamped and left.
+     * ==========================================================================================
+     *
+     * His complaint: *"the latest messages are cropped and I cannot open them fully."* Two separate causes,
+     * and only one of them was CSS: the cap was 400 characters, so most of the text had never been stored
+     * (that is `REPORT_BODY_MAX`, now 2000). This is the other half.
+     *
+     * `<details>` and a real `<summary>`, not a line-clamp on its own. The audit walks every page at five
+     * widths in both themes asserting **no truncation without a route** — text that is visually cut with no
+     * control to reveal it is the defect it exists to catch, and a clamp with no disclosure would be exactly
+     * that, added deliberately.
+     *
+     * `line-clamp` on the CLOSED state and unset when open, so the collapsed height is four lines rather
+     * than a character count: prose wraps differently at every width and cutting at 300 characters gives a
+     * different number of lines on a phone than on a monitor.
+     */
+    .saymore { display: block; }
+    .saymore > summary {
+        display: block; cursor: pointer; list-style: none;
+        color: var(--text); font-size: var(--t-md); line-height: var(--lh-body);
+        white-space: pre-wrap;
+    }
+    /* The native marker is removed in both engines and replaced by the word below, because a triangle beside
+       four lines of prose reads as a bullet rather than as a control. */
+    .saymore > summary::-webkit-details-marker { display: none; }
+    .saymore > summary::marker { content: ''; }
+    .saymore > summary > .saysome {
+        display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4;
+        overflow: hidden;
+    }
+    /* THE ROUTE, and it says which way it goes. `[open]` swaps the word, so the control is never lying about
+       what pressing it will do. */
+    .saymore > summary > .sayopen {
+        display: block; margin-top: 2px;
+        color: var(--dim); font-size: var(--t-xs); font-weight: var(--w-med);
+    }
+    .saymore > summary > .sayopen::after { content: 'show all of it'; }
+    .saymore[open] > summary > .sayopen::after { content: 'show less'; }
+    .saymore[open] > summary > .saysome { -webkit-line-clamp: unset; overflow: visible; }
+    .saymore > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    /* The full text lives in the summary itself, so the open state has nothing extra to render — this keeps
+       the element in the DOM for the sake of `details` semantics without drawing twice. */
+    .saymore > .sayrest { display: none; }
 
     /* WHAT NEEDS HIM. No chips and no counts — see Attention.tsx for why that is a rule rather than an
        omission. The gap is the whole styling: the cards inside are the queue's own. */

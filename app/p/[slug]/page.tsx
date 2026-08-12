@@ -26,6 +26,8 @@ import Nav from '../../components/Nav';
 import Runs from '../../components/Runs';
 import Thread from '../../components/Thread';
 import Attention from '../../components/Attention';
+import SayMore from '../../components/SayMore';
+import Forget from '../../components/Forget';
 import Approvals from '../../components/Approvals';
 
 export const dynamic = 'force-dynamic';
@@ -252,7 +254,12 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                                 <li key={w.id} className="wordrow" data-measure="word-row">
                                     <span className="wordwho">{w.agent}</span>
                                     <span className="wordwhen">{humanAgo(w.at)}</span>
-                                    <p className="wordbody">{w.body}</p>
+                                    {/* Clamped to four lines with a control that opens it — see SayMore.
+                                        A closing summary runs long and this is the headline of the page, so
+                                        it must be readable in full without leaving. */}
+                                    <div className="wordbody">
+                                        <SayMore text={w.body!} />
+                                    </div>
                                 </li>
                             ))}
                         </ul>
@@ -268,6 +275,20 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                 {/* The chart, when this project has anything in the window. A chart of nothing is the
                     660px void the palette page already had removed from it once. */}
                 {runs.total > 0 && <Runs view={runs} now={now} />}
+
+                {/*
+                  * THE WAY OUT OF A PHANTOM, offered only where it could be one.
+                  *
+                  * A project with no tasks and no decisions has never had work filed against it, which is
+                  * exactly the shape of a slug that was a subdirectory rather than a project. Offering the
+                  * control on a real project would be a delete button on a page full of somebody's work, and
+                  * `forgetProject` refuses there anyway — so this condition keeps a dangerous-looking control
+                  * off pages where it cannot do anything.
+                  */}
+                {view.openTasks.length === 0 && view.doneTasks.length === 0
+                    && view.openQuestions.length === 0 && view.answeredQuestions.length === 0 && (
+                    <Forget project={view.project} />
+                )}
 
                 {samples > 0 && (
                     <div className="presnote" data-measure="project-spend">

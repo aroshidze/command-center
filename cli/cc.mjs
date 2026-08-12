@@ -61,7 +61,7 @@ import {
     closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const CONFIG_DIR = join(homedir(), '.command-center');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -80,7 +80,74 @@ const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
  *
  * BUMP IT when this file gains something a hub relies on: a subcommand, a hook, a changed payload.
  */
-const CLI_VERSION = 2;
+const CLI_VERSION = 3;
+
+/**
+ * ==================================================================================================
+ * WHICH PROJECT AM I IN? THE ROOT, NOT THE FOLDER I HAPPEN TO BE STANDING IN.
+ * ==================================================================================================
+ *
+ * THE DEFECT THIS FIXES CREATED A PROJECT OUT OF NOTHING. His words: *"Another project appeared on the agents
+ * page but there is no such project. NO SUCH PROJECT! This is most probably one of the reports from the
+ * Gamblango project. Why the fuck is it opened as a separate project?"*
+ *
+ * It was. An agent working in `d:\Antigravity\GAMBLANGO\orchestrator\research\reports` fired hooks whose
+ * project was the last segment of the working directory — `reports`. So the hub grew a project with a name,
+ * a page, a run and a "latest word", and none of it existed. Agents change directory constantly; with the
+ * per-turn report hooks now firing, EVERY subdirectory an agent works in was one turn away from becoming a
+ * phantom project.
+ *
+ * THE SAME WRONG LINE WAS WRITTEN EIGHT TIMES, which is why the bug was everywhere at once, and it is the
+ * real lesson: the rule for "what is a project" was a one-liner copied into every command instead of a
+ * function. One function now, and every caller uses it.
+ *
+ * ==================================================================================================
+ * `.git` OR `.claude`, WALKING UP, AND WHY THOSE TWO
+ * ==================================================================================================
+ *
+ * Both mean "somebody treated this directory as the top of something". `.git` is nearly universal and
+ * `.claude` is written by `cc presence on` and by Claude Code itself, so a project that has been connected to
+ * this hub has one by definition. Checked at each level going up, nearest first — a nested repository is a
+ * real project and should win over its parent.
+ *
+ * MEASURED BEFORE CHOOSING THEM, because a marker in a shared parent would be catastrophic in the opposite
+ * direction: every project on the machine would collapse into one name. `d:\Antigravity` has neither, and
+ * `GAMBLANGO` has `.claude`, so the walk stops exactly where it should on the machine this broke on.
+ *
+ * A PROJECT WITH NEITHER MARKER BEHAVES EXACTLY AS BEFORE — the basename of where you are. That is the
+ * honest fallback: with no evidence of a root, the old guess is the only guess available, and it is right
+ * whenever the agent is standing in the project folder, which is what every instruction tells it to do.
+ */
+function projectRoot(from) {
+    const start = String(from || process.cwd());
+    let dir = start;
+    /* Twenty-four levels is deeper than any real checkout and is a guard against a symlink loop rather than
+     * a judgement about paths. */
+    for (let i = 0; i < 24; i++) {
+        try {
+            if (existsSync(join(dir, '.git')) || existsSync(join(dir, '.claude'))) return dir;
+        } catch { /* an unreadable directory is not a root; keep walking */ }
+        const up = dirname(dir);
+        if (!up || up === dir) break;
+        dir = up;
+    }
+    return start;
+}
+
+/** The project slug for a working directory: the root's folder name, slugified the one way. */
+function projectFrom(cwd) {
+    return slugify(projectRoot(cwd).split(/[\\/]/).filter(Boolean).pop() || '');
+}
+
+/**
+ * THE ONE SLUG RULE. Lowercased, non-alphanumerics collapsed to dashes, trimmed, capped at 40.
+ *
+ * Hoisted out of the six command bodies that each declared their own copy. Identical in all of them, which is
+ * luck rather than design — and the reason `projectFrom` above could be wrong in eight places at once.
+ */
+function slugify(s) {
+    return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+}
 
 /*
  * Config lives in the HOME directory, never in a project.
@@ -375,8 +442,7 @@ switch (cmd) {
          *   cc sync --all        every project
          *   cc sync --project X  a specific one
          */
-        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-        const inferred = slugify(process.cwd().split(/[\\/]/).filter(Boolean).pop() || '');
+        const inferred = projectFrom(process.cwd());
         const project = flags.has('--all') ? null : (flagValue('project') || inferred || null);
 
         const since = flagValue('since');
@@ -439,9 +505,8 @@ switch (cmd) {
      *   cc onboard --dry        show what would change
      */
     case 'onboard': {
-        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
         const dir = process.cwd();
-        const slug = flagValue('project') || slugify(dir.split(/[\\/]/).filter(Boolean).pop() || '');
+        const slug = flagValue('project') || projectFrom(dir);
         if (!slug) die('could not work out a project slug from the current directory');
 
         const { snippet, begin, end, pointer } = await api(
@@ -554,9 +619,8 @@ switch (cmd) {
      */
     case 'presence':
     case 'approvals': {
-        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
         const dir = process.cwd();
-        const slug = flagValue('project') || slugify(dir.split(/[\\/]/).filter(Boolean).pop() || '');
+        const slug = flagValue('project') || projectFrom(dir);
         const verb = positional[0] || 'status';
         if (!['on', 'off', 'status'].includes(verb)) {
             die(`usage: cc ${cmd} on|off|status   (in the project folder)`);
@@ -866,9 +930,8 @@ switch (cmd) {
         let hook = {};
         try { hook = JSON.parse(raw || '{}'); } catch { /* below */ }
 
-        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
         const cwd = hook.cwd || process.cwd();
-        const project = flagValue('project') || slugify(String(cwd).split(/[\\/]/).filter(Boolean).pop() || '');
+        const project = flagValue('project') || projectFrom(cwd);
         const session = hook.session_id || flagValue('session') || 'unknown';
         const ending = flags.has('--end');
 
@@ -942,9 +1005,8 @@ switch (cmd) {
         let hook = {};
         try { hook = JSON.parse(raw || '{}'); } catch { /* handled by the identity check below */ }
 
-        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
         const cwd = hook.cwd || process.cwd();
-        const project = flagValue('project') || slugify(String(cwd).split(/[\\/]/).filter(Boolean).pop() || '');
+        const project = flagValue('project') || projectFrom(cwd);
         const session = hook.session_id || flagValue('session') || 'unknown';
 
         const kind = flags.has('--said') ? 'said'
@@ -1043,9 +1105,8 @@ switch (cmd) {
         let hook = {};
         try { hook = JSON.parse(raw || '{}'); } catch { /* guarded below */ }
 
-        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
         const cwd = hook.cwd || process.cwd();
-        const project = flagValue('project') || slugify(String(cwd).split(/[\\/]/).filter(Boolean).pop() || '');
+        const project = flagValue('project') || projectFrom(cwd);
         const session = hook.session_id || flagValue('session') || '';
         const event = hook.hook_event_name || '';
         const input = hook.tool_input && typeof hook.tool_input === 'object' ? hook.tool_input : {};
@@ -1151,9 +1212,8 @@ switch (cmd) {
         let hook = {};
         try { hook = JSON.parse(raw || '{}'); } catch { /* handled by the guard below */ }
 
-        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
         const cwd = hook.cwd || process.cwd();
-        const project = flagValue('project') || slugify(String(cwd).split(/[\\/]/).filter(Boolean).pop() || '');
+        const project = flagValue('project') || projectFrom(cwd);
         const toolName = hook.tool_name || '';
 
         /*
@@ -1299,7 +1359,6 @@ switch (cmd) {
          */
         const GAP = 30 * 60 * 1000;
 
-        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
         /* Which sessions the hub has already measured for itself. A hook's own record always beats a
          * reconstruction of the same session, and the hub refuses the overwrite anyway — this only
@@ -1370,7 +1429,7 @@ switch (cmd) {
                 filesRead++;
                 points.sort((a, b) => a.t - b.t);
 
-                const project = slugify(String(cwd || d).split(/[\\/]/).filter(Boolean).pop() || '');
+                const project = projectFrom(cwd || d);
                 if (!project) continue;
 
                 let run = [points[0]];
@@ -1527,7 +1586,6 @@ switch (cmd) {
                 + '  Nothing was sent.');
         }
 
-        const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
         /* Deepest first, and capped. The hub walks these outward-in taking the first slug it knows, so six
          * levels is far more than enough and an uncapped list would put somebody's whole directory tree on the
          * wire for no gain. */

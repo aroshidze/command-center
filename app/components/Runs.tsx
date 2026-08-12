@@ -268,7 +268,28 @@ export default function Runs({ view, now }: { view: TimelineView; now: number })
                             ['--rows' as string]: lane.rows,
                         }}
                     >
-                        <span className="runname">{lane.project}</span>
+                        {/*
+                          * THE LANE NAME IS A LINK, because half a page of clickable project names is worse
+                          * than none. His words: *"the project names that are above are not clickable but the
+                          * ones that are below are clickable. All of them should be clickable."*
+                          *
+                          * He is right, and the inconsistency is the actual defect rather than the missing
+                          * link: two lists of the same nouns on one screen, one of which responds. That
+                          * teaches a reader that names are not reliably pressable, which costs the working
+                          * half its discoverability.
+                          *
+                          * `.aslink` is the same treatment the presence rows use, so the two lists behave
+                          * identically — underlined on hover only, because a chart with a column of
+                          * underlined blue slugs down its left edge stops reading as an instrument.
+                          */}
+                        <a
+                            className="runname aslink"
+                            href={`/p/${encodeURIComponent(lane.project)}`}
+                            data-measure="project-link"
+                            title={`Open ${lane.project}`}
+                        >
+                            {lane.project}
+                        </a>
                         <span className="runtrack">
                             {lane.blocks.map(b => (
                                 <BlockBar

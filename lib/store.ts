@@ -5,7 +5,7 @@ import {
 } from './ids';
 import type { PresenceRow } from './presence';
 import {
-    REPORT_BODY_MAX, RUN_GAP_MINUTES, redactSecrets,
+    REPORT_BODY_MAX, RUN_GAP_MINUTES, redactSecrets, stripInjectedContext,
 } from './reports';
 import type { Report, ReportKind } from './reports';
 /*
@@ -1659,26 +1659,51 @@ function reportKind(v: unknown): ReportKind {
  */
 export async function recordReport(
     input: ReportInput, agent: string,
-): Promise<{ project: string; session: string; run: string; kind: ReportKind; redacted: boolean }> {
+): Promise<{
+    project: string; session: string; run: string; kind: ReportKind; redacted: boolean;
+    /** False when the text was nothing but injected editor context, so no thread row was made. */
+    stored: boolean;
+}> {
     await ensureSchema();
     const proj = project(input.project);
     const conversation = sessionId(input.session);
     const kind = reportKind(input.kind);
 
-    const raw = input.body == null || input.body === '' ? null : String(input.body);
+    /*
+     * STRIP THE IDE'S INJECTIONS BEFORE TRUNCATING, and the order is the whole point.
+     *
+     * `UserPromptSubmit`'s `prompt` is what the harness is about to send the model, not what the human
+     * typed — an IDE prepends `<ide_opened_file>…</ide_opened_file>` and friends. Truncating first would
+     * spend a third of the budget on that wrapper and cut the real sentence off, which is exactly what
+     * shipped: three rows on his project page attributed an editor's bookkeeping to him, cropped.
+     *
+     * Done HERE rather than in the CLI so it cannot be bypassed by an old CLI or another client.
+     */
+    const raw = input.body == null || input.body === '' ? null : stripInjectedContext(String(input.body));
     let redacted = false;
     let body: string | null = null;
     if (raw) {
         /*
-         * TRUNCATE FIRST, THEN REDACT. The other order wastes work on prose that is about to be thrown
-         * away, and worse, it could redact a secret in the tail of a message and then cut the redaction
-         * marker off — leaving a message that says nothing about having been shortened OR cleaned.
+         * TRUNCATE, THEN REDACT. The other order wastes work on prose that is about to be thrown away, and
+         * worse, it could redact a secret in the tail of a message and then cut the redaction marker off —
+         * leaving a message that says nothing about having been shortened OR cleaned.
          */
         const shown = sanitiseForDisplay(raw, REPORT_BODY_MAX, '(nothing was said)');
         const safe = redactSecrets(shown.text, findSecret);
         redacted = safe.redacted;
         body = safe.text;
     }
+
+    /*
+     * A PROMPT THAT WAS NOTHING BUT AN IDE NOTIFICATION IS NOT A MESSAGE, so it gets no row in the thread —
+     * but it IS still activity, so the run below is updated either way.
+     *
+     * Opening a file in an editor fires `UserPromptSubmit` with a prompt consisting only of
+     * `<ide_opened_file>…</ide_opened_file>`. Stored, that is a line on his page saying he said something he
+     * did not say and cannot act on. Dropped, the hub still knows the session was alive at that moment,
+     * which is the true half of what the event carried.
+     */
+    const nothingSaid = kind === 'told' && (input.body != null && input.body !== '') && !body;
 
     /* The activity update comes FIRST, so a report always has a run to belong to even if the insert
      * below fails — presence going stale is the failure this whole feature exists to remove, and it is
@@ -1701,6 +1726,12 @@ export async function recordReport(
                 ended_at = null, end_reason = null
     `;
 
+    if (nothingSaid) {
+        /* Activity recorded, no row in the thread, and the caller is told which so a hook can say so on
+         * stderr rather than reporting a stored message that does not exist. */
+        return { project: proj, session: conversation, run, kind, redacted, stored: false };
+    }
+
     const id = newReportId();
     await writeVerified<Row>({
         what: `record what was said in ${proj}`,
@@ -1720,7 +1751,7 @@ export async function recordReport(
         },
     });
 
-    return { project: proj, session: conversation, run, kind, redacted };
+    return { project: proj, session: conversation, run, kind, redacted, stored: true };
 }
 
 function mapReport(r: Row): Report {
@@ -2909,6 +2940,99 @@ export async function projectView(slug: string): Promise<{
         notes: noteRows.map(mapNote),
         approvals: approvals.filter(a => a.project === proj),
         spend: spend.filter(s => s.project === proj),
+    };
+}
+
+/**
+ * ==================================================================================================
+ * FORGET A PROJECT THAT WAS NEVER A PROJECT — the second delete in this codebase, and it needs the
+ * same kind of argument the first one did.
+ * ==================================================================================================
+ *
+ * `docs/HANDOVER.md` says plainly: *"There is no delete endpoint for agent data and there should not be
+ * one."* That rule is right and it is about protecting a real hub from a suite. This is the second
+ * exception, and the first — `note.remove` — set the shape of the argument: it arrived because production
+ * had permanent residue with no way to remove it, and the alternative was living with a lie on the most
+ * trusted surface in the product.
+ *
+ * THE RESIDUE HERE WAS MINE. The CLI inferred a project from whatever directory an agent was standing in,
+ * so `GAMBLANGO/orchestrator/research/reports` became a project called `reports` — with a page, a run, and
+ * a latest word. `projectFrom` in `cli/cc.mjs` stops it happening again. It does nothing about the rows
+ * already written, and those rows have no expiry: `presenceRows` is not time-windowed, so a phantom sits on
+ * `/agents` reading "quiet" forever.
+ *
+ * ==================================================================================================
+ * WHAT MAKES IT SAFE IS THE REFUSAL, NOT THE CAUTION
+ * ==================================================================================================
+ *
+ * **It deletes only OBSERVATIONS, and only for a slug with no work of any kind.** If a single task or
+ * question has ever been filed against it, this refuses — and that is what makes it impossible to lose
+ * anything a human or an agent authored. A phantom by definition has no work: nobody filed a task against
+ * a directory that only existed as a path.
+ *
+ * `events` ARE LEFT ALONE, deliberately, and it is the same reasoning `note.remove` uses: the event log is
+ * what agents were TOLD, and rewriting it would make the hub disagree with the history its own clients have
+ * already read. It costs nothing here — `foldProjects` only gives a slug a row when something CURRENT is
+ * known about it, so with the observations gone the phantom leaves the page while the record of it survives.
+ *
+ * IT IS REACHED FROM THE WEB SESSION, never from an agent token. Same door as `note.remove`, for the same
+ * reason: this is a judgement only the human can make, and a suite holding an agent token cannot call it.
+ */
+export async function forgetProject(slug: string): Promise<{
+    project: string; presence: number; reports: number; subagents: number; spend: number;
+}> {
+    await ensureSchema();
+    const proj = project(slug);
+
+    const [[work]] = [await sql()`
+        select (select count(*)::int from tasks where project = ${proj}) tasks,
+               (select count(*)::int from questions where project = ${proj}) questions
+    ` as Row[]];
+    const tasks = Number(work.tasks);
+    const questions = Number(work.questions);
+    if (tasks > 0 || questions > 0) {
+        throw new Invalid(
+            `"${proj}" has ${tasks} task(s) and ${questions} decision(s) filed against it, so it is a real `
+            + 'project and this refuses. This exists to remove a slug that was never a project — a phantom '
+            + 'from a subdirectory — and it deletes observations only. Nothing that a person or an agent '
+            + 'authored can be lost through it.',
+        );
+    }
+
+    /* Counted before, not after, because `delete` returning a count is the driver's business and the point
+     * of this figure is to tell him what went. Re-read below to prove it actually went. */
+    const [[before]] = [await sql()`
+        select (select count(*)::int from presence  where project = ${proj}) presence,
+               (select count(*)::int from reports   where project = ${proj}) reports,
+               (select count(*)::int from subagents where project = ${proj}) subagents,
+               (select count(*)::int from spend     where project = ${proj}) spend
+    ` as Row[]];
+
+    await sql()`delete from reports where project = ${proj}`;
+    await sql()`delete from subagents where project = ${proj}`;
+    await sql()`delete from presence where project = ${proj}`;
+    await sql()`delete from spend where project = ${proj}`;
+
+    /* VERIFIED BY READING, like every other write in this hub. A delete that reported success over rows
+     * that are still there would leave the phantom on the page and tell him it was gone. */
+    const [[after]] = [await sql()`
+        select (select count(*)::int from presence  where project = ${proj}) presence,
+               (select count(*)::int from reports   where project = ${proj}) reports,
+               (select count(*)::int from subagents where project = ${proj}) subagents,
+               (select count(*)::int from spend     where project = ${proj}) spend
+    ` as Row[]];
+    const left = Number(after.presence) + Number(after.reports)
+        + Number(after.subagents) + Number(after.spend);
+    if (left > 0) {
+        throw new WriteFailed(`forget "${proj}"`, `${left} row(s) are still there after the delete`);
+    }
+
+    return {
+        project: proj,
+        presence: Number(before.presence),
+        reports: Number(before.reports),
+        subagents: Number(before.subagents),
+        spend: Number(before.spend),
     };
 }
 

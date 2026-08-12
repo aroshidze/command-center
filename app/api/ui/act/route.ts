@@ -7,8 +7,8 @@ import { paletteBySlug } from '../../../../lib/palettes';
 import { surfaceBySlug } from '../../../../lib/surfaces';
 import { deriveWholeRecord, marks as marksOf, standing as standingOf } from '../../../../lib/progress';
 import {
-    addNote, board, decideApproval, removeNote, answerQuestion, appendAnswerNote, setTaskNote,
-    setTaskStatus,
+    addNote, board, decideApproval, forgetProject, removeNote, answerQuestion, appendAnswerNote,
+    setTaskNote, setTaskStatus,
 } from '../../../../lib/store';
 import { markAnswered, markApprovalSettled } from '../../../../lib/telegram';
 import { fail, json, readJson } from '../../../../lib/http';
@@ -161,6 +161,21 @@ async function handle(req: Request) {
              * table; the agent contract reads `events`. Withdrawing a note removes it from HIS view of what he
              * has said and does not pretend it was never sent.
              */
+            /*
+             * FORGET A SLUG THAT WAS NEVER A PROJECT. The second delete in this interface, and the reasoning
+             * is on `forgetProject` in lib/store.ts — including why it refuses the moment a task or a
+             * decision exists, which is what makes it unable to lose anything anybody authored.
+             *
+             * Here rather than on an agent route on purpose: deciding that a project is a phantom is a
+             * judgement only the human can make, and this door needs the web session.
+             */
+            case 'project.forget': {
+                const slug = String(body.project ?? '');
+                if (!slug) return json({ ok: false, error: '`project` is required' }, 400);
+                const gone = await forgetProject(slug);
+                return json({ ok: true, saved: true, ...gone });
+            }
+
             case 'note.remove': {
                 const id = String(body.id ?? '');
                 if (!id) return json({ ok: false, error: '`id` is required' }, 400);

@@ -38,8 +38,13 @@
  *   2  12 August 2026. `cc report` and the three hooks that drive it (Stop, UserPromptSubmit,
  *      Notification), so a hub can show what an agent said and who is waiting. A CLI at 1 cannot report
  *      any of that and `cc presence on` from it writes six hooks instead of nine.
+ *   3  12 August 2026. The project is inferred from the project ROOT rather than from whatever directory
+ *      an agent happens to be standing in. A CLI at 2 or below invents a project every time it works in a
+ *      subfolder — a real hub grew a phantom project called `reports` from
+ *      `GAMBLANGO/orchestrator/research/reports`, complete with a page and a "latest word". This is the
+ *      bump that most deserves the warning: the damage is silent, it looks like data, and it accumulates.
  */
-export const CLI_VERSION = 2;
+export const CLI_VERSION = 3;
 
 /**
  * What a hub tells an agent whose CLI is older than it expects.

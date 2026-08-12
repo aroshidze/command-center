@@ -1824,6 +1824,59 @@ await check('a REPORT is stored as a quote, and an invented kind is refused', as
     assert(!stored.includes('all going well'), 'a self-reported status reached the database');
 });
 
+await check('the IDE\'s injected context is never stored as something HE said', async () => {
+    /*
+     * A DEFECT HE FOUND ON HIS OWN PROJECT PAGE: *"the messages I send, look at them. It's just opening a
+     * file? What kind of message is that? I never sent it."* Three rows attributed to him, each beginning
+     * with `<ide_opened_file>The user opened the file …</ide_opened_file>`.
+     *
+     * `UserPromptSubmit`'s `prompt` is not what the human typed — it is what the harness is about to send the
+     * model, and an IDE prepends context blocks. Storing that under a person's name is the worst thing this
+     * hub can get wrong: every other row on the page is trustworthy because it can name who said it, and
+     * these named the wrong person. The wrapper also ate a third of the length budget, so the real sentence
+     * was cropped.
+     *
+     * THREE PROPERTIES, and the third is the one a naive fix would miss.
+     */
+    const db = await dbDirect();
+    await db`delete from reports where project = 'proof-reports'`;
+
+    const WRAP = '<ide_opened_file>The user opened the file d:\\x\\ORCHESTRATOR.md in the IDE. This may or '
+        + 'may not be related to the current task.</ide_opened_file>';
+
+    /* 1. A prompt with a wrapper AND real words keeps the words and loses the wrapper. */
+    const both = await agent('/api/agent/report', {
+        method: 'POST',
+        body: {
+            project: 'proof-reports', session: 'conv-ide', kind: 'told',
+            body: `${WRAP}Produce a decision-grade teardown of six offshore casino brands.`,
+        },
+    });
+    eq(both.status, 200, 'status');
+    eq(both.json.stored, true, 'a prompt with real words in it must be stored');
+    const [row] = await db`select body from reports where project = 'proof-reports'`;
+    assert(!String(row.body).includes('ide_opened_file'), 'the IDE wrapper reached the database');
+    assert(!String(row.body).includes('opened the file'), 'the IDE prose reached the database');
+    assert(String(row.body).startsWith('Produce a decision-grade teardown'),
+        `the stored text does not start with what he actually typed: ${JSON.stringify(row.body)}`);
+
+    /* 2. A prompt that is NOTHING BUT a wrapper stores no row at all — it is not a message. */
+    await db`delete from reports where project = 'proof-reports'`;
+    const only = await agent('/api/agent/report', {
+        method: 'POST',
+        body: { project: 'proof-reports', session: 'conv-ide', kind: 'told', body: WRAP },
+    });
+    eq(only.status, 200, 'status for a prompt that was only injected context');
+    eq(only.json.stored, false, 'a pure IDE notification must not become a thread row');
+    const after = await db`select count(*)::int n from reports where project = 'proof-reports'`;
+    eq(after[0].n, 0, 'rows stored for a prompt that was only injected context');
+
+    /* 3. AND IT IS STILL ACTIVITY. The event proves the session was alive at that moment, which is the true
+     *    half of what it carried — dropping the row must not drop the heartbeat. */
+    const beats = await db`select * from presence where project = 'proof-reports'`;
+    assert(beats.length > 0, 'the injected-context event was dropped entirely, losing the activity too');
+});
+
 await check('a report REDACTS a credential rather than storing it or losing the report', async () => {
     /*
      * The one place in this codebase where a secret-shaped value is redacted instead of rejected, and the

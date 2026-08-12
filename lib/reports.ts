@@ -47,8 +47,69 @@ import type { Question, Task } from './types';
  * the same reason — see `redactSecrets`.
  */
 
-/** How much of a message is kept. Four hundred characters. */
-export const REPORT_BODY_MAX = 400;
+/**
+ * How much of a message is kept. Two thousand characters.
+ *
+ * IT WAS 400, AND THAT WAS TOO MEAN BY A FACTOR OF FIVE. Four hundred is about four lines, which is under
+ * half of a normal turn's closing paragraph — so his own project page showed *"…verified free of em-dashes
+ * and en-dashes) **Artifact:** … | Instant Casi…"* and there was nothing to expand to, because the rest had
+ * never been stored. A cap that cuts the middle out of the thing the page exists to show is not a cap, it is
+ * data loss with an ellipsis on it.
+ *
+ * WHY NOT UNBOUNDED. One `said` row per turn is the fastest-growing table in the hub, and an assistant turn
+ * can end with a thousand-line file dump. Two thousand characters is a couple of screenfuls — comfortably
+ * more than any closing summary and still a bound. The page shows the first few lines with a control to open
+ * the rest, so length costs nothing to read past.
+ *
+ * ROWS STORED UNDER THE OLD CAP STAY SHORT. There is nothing to recover; the text was never sent.
+ */
+export const REPORT_BODY_MAX = 2000;
+
+/**
+ * STRIP WHAT THE IDE INJECTED, BEFORE ANYTHING ELSE TOUCHES THE TEXT.
+ *
+ * ==================================================================================================
+ * THE DEFECT THIS EXISTS FOR, IN HIS WORDS
+ * ==================================================================================================
+ *
+ * *"the messages I send, look at them. It's just opening a file? What kind of message is that? I never sent
+ * it."* He is right: he never sent it. Three rows on his project page, all attributed to HIM, all beginning
+ *
+ *     <ide_opened_file>The user opened the file d:\…\ORCHESTRATOR.md in the IDE. This may or may not be
+ *     related to the current task.</ide_opened_file>
+ *
+ * The `UserPromptSubmit` hook's `prompt` field is not what the human typed. It is what the harness is about
+ * to send the model, and an IDE integration prepends context blocks to it. So the hub was storing an
+ * editor's bookkeeping under a human's name, which is the worst kind of thing this hub can get wrong: every
+ * other row on that page is trustworthy because it can name who said it, and this one named the wrong
+ * person.
+ *
+ * It also caused the truncation. The wrapper is ~150 characters, so the real message started a third of the
+ * way into a 400-character budget and got cut.
+ *
+ * ==================================================================================================
+ * WHAT IS STRIPPED, AND WHY IT IS A SHAPE RATHER THAN A LIST
+ * ==================================================================================================
+ *
+ * Any `<ide_*>…</ide_*>` block, and `<system-reminder>…</system-reminder>`. Matched on the SHAPE because the
+ * set is not ours and will grow: `ide_opened_file` and `ide_selection` are the two seen, and a list of two
+ * would silently start storing the third. Anything the harness wraps in a tag of that shape is context it
+ * added, not prose a person wrote.
+ *
+ * RETURNS EMPTY WHEN THERE IS NOTHING LEFT, and the caller stores no row at all. A turn whose entire prompt
+ * was an IDE notification is not a message; a row for it would be a line on his page that he did not write
+ * and cannot act on.
+ */
+export function stripInjectedContext(body: string): string {
+    return body
+        .replace(/<ide_[a-z_]*>[\s\S]*?<\/ide_[a-z_]*>/gi, ' ')
+        .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
+        /* An unclosed opener, which is what a truncated injection looks like. Dropped to the end rather than
+         * left as a dangling tag name in the middle of his sentence. */
+        .replace(/<(?:ide_[a-z_]*|system-reminder)>[\s\S]*$/i, ' ')
+        .replace(/[ \t]+/g, ' ')
+        .trim();
+}
 
 /**
  * THE GAP THAT ENDS A RUN. Sixty minutes, and the number is not a preference.

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { ThreadItem } from '../../lib/reports';
 import { act, humanAgo } from './ui';
+import SayMore from './SayMore';
 
 /**
  * ONE PROJECT'S CONVERSATION, IN THE ORDER IT HAPPENED — and a box to say something back.
@@ -95,8 +96,11 @@ function Item({ item }: { item: ThreadItem }) {
               * makes it less readable than the terminal it came from — which would defeat the whole point
               * of this page.
               */}
+            {/* Clamped to four lines with a control that opens it. A forty-item thread cannot spend twenty
+                lines on one turn's closing summary, and cutting it with no way through would be the
+                truncation-without-a-route the audit exists to catch. */}
             <span className="thbody">
-                {item.body}
+                <SayMore text={item.body} />
                 {item.meta && <span className="thmeta"> — {item.meta}</span>}
             </span>
             <span className="thwhen">{humanAgo(item.at)}</span>
