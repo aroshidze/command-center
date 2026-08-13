@@ -182,6 +182,11 @@ export interface TimelineView {
     from: string;
     to: string;
     hours: number;
+    /**
+     * The zone the axis labels are in, carried so the component cannot label a block in a different one.
+     * Two clocks on one chart disagreeing by four hours is worse than both being wrong the same way.
+     */
+    zone: string;
     lanes: Lane[];
     axis: AxisMark[];
     /** True when the window had to stretch past a day because nothing had run in one. */
@@ -247,7 +252,7 @@ export function chooseWindow(
  * because every other date in this hub is, and a chart whose axis disagreed with the sentences above it
  * about what "today" means would be the kind of small contradiction that costs trust in every figure.
  */
-export function axisFor(from: number, to: number): AxisMark[] {
+export function axisFor(from: number, to: number, zone = 'UTC'): AxisMark[] {
     const span = to - from;
     const hours = span / 3_600_000;
     const out: AxisMark[] = [];
@@ -256,13 +261,21 @@ export function axisFor(from: number, to: number): AxisMark[] {
         /* Every three hours: eight or nine labels across the chart, which is the density both
          * references land on — enough to read a time off a block, few enough not to become a grid. */
         const step = 3 * 3_600_000;
-        const first = Math.ceil(from / step) * step;
+        /*
+         * ALIGNED TO THE READER'S CLOCK, not to UTC's. `ceil(from / step)` lands on a multiple of three hours
+         * since the epoch, which is a three-hour boundary in UTC and something like 01:00, 04:00, 07:00 in a
+         * zone offset by a whole hour — and in the half-hour zones (India, parts of Australia) it is worse.
+         * The offset is measured for THIS window rather than assumed, so a zone that is +5:30 or that changed
+         * its offset last month still gets labels on its own hours.
+         */
+        const offset = offsetAt(from, zone);
+        const first = Math.ceil((from + offset) / step) * step - offset;
         for (let t = first; t <= to; t += step) {
-            const d = new Date(t);
-            const h = d.getUTCHours();
+            const d = zoned(t, zone);
+            const h = d.hour;
             out.push({
                 at: ((t - from) / span) * 100,
-                label: h === 0 ? `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}` : `${pad(h)}:00`,
+                label: h === 0 ? `${d.day} ${MONTHS[d.month]}` : `${pad(h)}:00`,
                 major: h === 0,
                 droppable: h % 6 !== 0,
             });
@@ -271,22 +284,61 @@ export function axisFor(from: number, to: number): AxisMark[] {
     }
 
     const step = 86_400_000;
-    const first = Math.ceil(from / step) * step;
+    const dayOffset = offsetAt(from, zone);
+    const first = Math.ceil((from + dayOffset) / step) * step - dayOffset;
     for (let t = first; t <= to; t += step) {
-        const d = new Date(t);
+        const d = zoned(t, zone);
         out.push({
             at: ((t - from) / span) * 100,
-            label: `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`,
-            major: d.getUTCDate() === 1,
+            label: `${d.day} ${MONTHS[d.month]}`,
+            major: d.day === 1,
             /* Day marks on the wide window: every other one, so a fortnight reads as seven labels on a
              * phone rather than fourteen overlapping ones. */
-            droppable: d.getUTCDate() % 2 === 1,
+            droppable: d.day % 2 === 1,
         });
     }
     return out;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * THE CALENDAR FIELDS OF AN INSTANT IN A ZONE, and a copy of what `partsIn` does in lib/format.ts.
+ *
+ * The duplication is FORCED and it is the trade this module already makes elsewhere. `tests/use-it.mjs`
+ * imports `buildTimeline` directly to assert the chart's arithmetic without a browser, which only works while
+ * this file imports no VALUES from anywhere (AGENTS.md trap 2) — and `lib/presence.ts` is already unreachable
+ * to the suites for importing one date formatter. Between "the chart's arithmetic is checkable" and "there is
+ * one copy of a nine-line Intl call", the checkable chart wins. `Intl` itself is a global, so this needs no
+ * import.
+ */
+function zoned(ms: number, zone: string): { year: number; month: number; day: number; hour: number } {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: zone,
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hour12: false,
+    }).formatToParts(new Date(ms));
+    const get = (type: string): number => Number(parts.find(p => p.type === type)?.value ?? 0);
+    /* `% 24` because midnight formats as 24 in some locales and the day-boundary test is `hour === 0`. */
+    return { year: get('year'), month: get('month') - 1, day: get('day'), hour: get('hour') % 24 };
+}
+
+/**
+ * HOW FAR A ZONE IS FROM UTC AT A GIVEN INSTANT, in milliseconds.
+ *
+ * Measured at the instant rather than taken as a constant, because a zone's offset is not one: it changes at
+ * every daylight-saving boundary. Computed by formatting the instant in the zone and reading the result back
+ * as if it were UTC — the difference is the offset. It is the standard trick and it needs no table.
+ */
+function offsetAt(ms: number, zone: string): number {
+    const p = zoned(ms, zone);
+    const minutes = new Intl.DateTimeFormat('en-GB', {
+        timeZone: zone, minute: '2-digit', hour12: false,
+    }).formatToParts(new Date(ms)).find(x => x.type === 'minute')?.value ?? '0';
+    const asUtc = Date.UTC(p.year, p.month, p.day, p.hour, Number(minutes));
+    /* Rounded to the minute: the seconds are not formatted above, so the raw difference carries the instant's
+     * own seconds as noise and a boundary test would wobble by up to a minute. */
+    return Math.round((asUtc - ms) / 60_000) * 60_000;
+}
 const pad = (n: number): string => (n < 10 ? `0${n}` : String(n));
 
 /** What kind of claim this session supports. The single most important function in this file. */
@@ -343,7 +395,7 @@ function pack(blocks: Block[], minGapPct: number): number {
  * alternative is a chart whose claims change when the window is resized.
  */
 export function buildTimeline(
-    sessions: SessionRow[], subagents: SubagentRow[], now: number, chartPx = 1000,
+    sessions: SessionRow[], subagents: SubagentRow[], now: number, chartPx = 1000, zone = 'UTC',
 ): TimelineView {
     const { from, to, stretched } = chooseWindow(sessions, now);
     const span = Math.max(1, to - from);
@@ -525,8 +577,9 @@ export function buildTimeline(
         from: new Date(from).toISOString(),
         to: new Date(to).toISOString(),
         hours: Math.round(span / 3_600_000),
+        zone,
         lanes,
-        axis: axisFor(from, to),
+        axis: axisFor(from, to, zone),
         stretched,
         total: lanes.reduce((n, l) => n + l.blocks.length, 0),
         running,

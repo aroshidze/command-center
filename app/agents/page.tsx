@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { hasWebSession } from '../../lib/auth';
 import { LOOKS_COOKIE, parseLooks, resolveLooks } from '../../lib/looks';
-import { readLooksPreference } from '../../lib/settings';
+import { readLooksPreference, readTimezone } from '../../lib/settings';
 import { paletteCss } from '../../lib/palettes';
 import { surfaceCss } from '../../lib/surfaces';
 import { deriveWholeRecord, marks as marksOf, standing as standingOf } from '../../lib/progress';
@@ -18,6 +18,7 @@ import Nav from '../components/Nav';
 import Presence from '../components/Presence';
 import Runs from '../components/Runs';
 import CopyBlock from '../components/CopyBlock';
+import Zone from '../components/Zone';
 
 export const dynamic = 'force-dynamic';
 
@@ -151,7 +152,8 @@ export default async function AgentsPage() {
      * about time, so one place can be checked — and `buildTimeline` imports nothing but types, so a
      * check can load it and assert the arithmetic without a browser.
      */
-    const runs = buildTimeline(view.sessions, view.subagents, now);
+    const zone = await readTimezone();
+    const runs = buildTimeline(view.sessions, view.subagents, now, 1000, zone);
     /*
      * WHO IS WAITING, across every project. Folded from the newest report per conversation, so a run that
      * asked at midnight and has heard nothing since is still on this list at nine — and one he has since
@@ -159,7 +161,7 @@ export default async function AgentsPage() {
      */
     const waiting = waitingRuns(view.reports);
     const sentences = Object.fromEntries(
-        projectPresence.map(p => [p.project, sentenceFor(p, now)]),
+        projectPresence.map(p => [p.project, sentenceFor(p, now, zone)]),
     );
 
     /*
@@ -207,6 +209,7 @@ export default async function AgentsPage() {
             {surface && <style href={`cc-surface-${looks.surface}`} precedence="high">{surface}</style>}
             <div className="wrap">
                 <Nav here="agents" />
+                <Zone stored={zone} />
                 <header>
                     <div className="top">
                         <h1>Your agents</h1>

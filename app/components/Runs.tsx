@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import type { Block, SubagentMark, TimelineView } from '../../lib/timeline';
-import { humanSpan, projectColor } from './ui';
+import { clockIn, humanSpan, projectColor } from './ui';
 
 /**
  * WHAT RAN, LAID OUT ON TIME — the centre of `/agents`, and the thing that should have been built the
@@ -59,12 +59,16 @@ import { humanSpan, projectColor } from './ui';
  * hunting inside a trace; he is looking at a night.
  */
 
-/** Padded UTC clock time. Every date in this hub is UTC, and an axis that disagreed would be a bug. */
-function clockOf(iso: string): string {
-    const d = new Date(iso);
-    const h = d.getUTCHours();
-    const m = d.getUTCMinutes();
-    return `${h < 10 ? '0' : ''}${h}:${m < 10 ? '0' : ''}${m}`;
+/**
+ * Padded clock time IN THE ZONE THE VIEW WAS BUILT IN.
+ *
+ * It used to be UTC, with a comment saying every date in this hub is UTC and an axis that disagreed would be
+ * a bug. The comment was right about the bug and wrong about which way round it was: the owner is in Georgia,
+ * UTC+4, and read a chart of his own night four hours out of step with his own clock. The zone travels on the
+ * view (see `TimelineView.zone`) precisely so a block and the axis above it cannot be labelled differently.
+ */
+function clockOf(iso: string, zone: string): string {
+    return clockIn(new Date(iso).getTime(), zone);
 }
 
 /**
@@ -75,23 +79,23 @@ function clockOf(iso: string): string {
  * going instead, which is a different and defensible claim. An `unterminated` one says what it is
  * rather than pretending to be either.
  */
-function blockSentence(b: Block, now: number): string {
-    const started = clockOf(b.startedAt);
+function blockSentence(b: Block, now: number, zone: string): string {
+    const started = clockOf(b.startedAt, zone);
     switch (b.kind) {
         case 'running':
             return `started ${started}, still going — ${humanSpan(
                 Math.max(0, Math.round((now - new Date(b.startedAt).getTime()) / 60_000)),
             )} so far`;
         case 'unterminated':
-            return `started ${started}, last seen ${clockOf(b.endedAt!)} — never signed off`;
+            return `started ${started}, last seen ${clockOf(b.endedAt!, zone)} — never signed off`;
         case 'reconstructed':
-            return `${started}–${clockOf(b.endedAt!)}, ${humanSpan(b.minutes ?? 0)} — from the transcript`;
+            return `${started}–${clockOf(b.endedAt!, zone)}, ${humanSpan(b.minutes ?? 0)} — from the transcript`;
         default:
-            return `${started}–${clockOf(b.endedAt!)}, ${humanSpan(b.minutes ?? 0)}`;
+            return `${started}–${clockOf(b.endedAt!, zone)}, ${humanSpan(b.minutes ?? 0)}`;
     }
 }
 
-function subagentSentence(a: SubagentMark): string {
+function subagentSentence(a: SubagentMark, zone: string): string {
     const ran = a.endedAt
         ? humanSpan(Math.max(0, Math.round(
             (new Date(a.endedAt).getTime() - new Date(a.startedAt).getTime()) / 60_000)))
@@ -110,11 +114,11 @@ function subagentSentence(a: SubagentMark): string {
         a.linesAdded || a.linesRemoved
             ? `+${a.linesAdded ?? 0}/-${a.linesRemoved ?? 0}` : null,
     ].filter(Boolean).join(', ');
-    return `${a.type}${a.task ? ` — ${a.task}` : ''} · ${clockOf(a.startedAt)}`
+    return `${a.type}${a.task ? ` — ${a.task}` : ''} · ${clockOf(a.startedAt, zone)}`
         + `${ran ? `, ${ran}` : ''}, ${how}${did ? ` · ${did}` : ''}`;
 }
 
-function SubMark({ a }: { a: SubagentMark }) {
+function SubMark({ a, zone }: { a: SubagentMark; zone: string }) {
     return (
         <span
             className={`runsub k-${a.kind}${a.tick ? ' istick' : ''}`}
@@ -122,15 +126,15 @@ function SubMark({ a }: { a: SubagentMark }) {
             data-kind={a.kind}
             data-outcome={a.outcome ?? 'open'}
             style={{ left: `${a.left}%`, width: a.tick ? undefined : `${a.width}%` }}
-            title={subagentSentence(a)}
+            title={subagentSentence(a, zone)}
         />
     );
 }
 
-function BlockBar({ b, now, onPick, picked }: {
-    b: Block; now: number; onPick: (key: string | null) => void; picked: boolean;
+function BlockBar({ b, now, onPick, picked, zone }: {
+    b: Block; now: number; onPick: (key: string | null) => void; picked: boolean; zone: string;
 }) {
-    const sentence = blockSentence(b, now);
+    const sentence = blockSentence(b, now, zone);
     return (
         <button
             type="button"
@@ -154,7 +158,7 @@ function BlockBar({ b, now, onPick, picked }: {
                 what makes them nested rather than merely nearby. A tick that would fall outside its
                 parent is clamped to it in the fold, because a child outside its parent reads as a
                 rendering fault rather than as data. */}
-            {b.subagents.map(a => <SubMark key={a.id} a={a} />)}
+            {b.subagents.map(a => <SubMark key={a.id} a={a} zone={zone} />)}
         </button>
     );
 }
@@ -167,12 +171,12 @@ function BlockBar({ b, now, onPick, picked }: {
  * screen — four new things to maintain for information that is already in the `title`. This is the
  * keyboard-and-tap-reachable version of the same string.
  */
-function Detail({ b, now }: { b: Block; now: number }) {
+function Detail({ b, now, zone }: { b: Block; now: number; zone: string }) {
     return (
         <div className="rundetail" data-measure="run-detail">
             <span className="pdot" style={{ background: projectColor(b.project) }} />
             <b>{b.project}</b>
-            <span className="runsay">{blockSentence(b, now)}</span>
+            <span className="runsay">{blockSentence(b, now, zone)}</span>
             {b.branch && <span className="runmeta">{b.branch}</span>}
             {b.model && <span className="runmeta">{b.model}</span>}
             {b.endReason && b.kind === 'measured' && (
@@ -185,7 +189,7 @@ function Detail({ b, now }: { b: Block; now: number }) {
                             <span className={`runpip k-${a.kind}`} />
                             <span className="runsubtype">{a.type}</span>
                             {a.task && <span className="runsubtask">{a.task}</span>}
-                            <span className="runsubwhen">{subagentSentence(a).split(' · ').slice(1).join(' · ')}</span>
+                            <span className="runsubwhen">{subagentSentence(a, zone).split(' · ').slice(1).join(' · ')}</span>
                         </li>
                     ))}
                 </ul>
@@ -298,6 +302,7 @@ export default function Runs({ view, now }: { view: TimelineView; now: number })
                                     now={now}
                                     picked={b.key === picked}
                                     onPick={setPicked}
+                                    zone={view.zone}
                                 />
                             ))}
                         </span>
@@ -310,7 +315,7 @@ export default function Runs({ view, now }: { view: TimelineView; now: number })
                 below it. A chart that reflows the page when you touch it is a chart you stop touching. */}
             <div className="rundetailslot">
                 {chosen
-                    ? <Detail b={chosen} now={now} />
+                    ? <Detail b={chosen} now={now} zone={view.zone} />
                     : <p className="runhint" data-measure="run-hint">
                         Every bar is one run. Tap one for its branch, its model and what it spawned.
                       </p>}

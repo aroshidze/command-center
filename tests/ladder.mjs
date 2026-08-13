@@ -70,6 +70,7 @@ import {
 import { FINISHES, finishBySlug, generatedFinish } from '../lib/finishes.ts';
 import { generatedSurface, surfaceBySlug, SURFACES } from '../lib/surfaces.ts';
 import { chargeFor, chargeInk, chargeOverlap, CHARGES } from '../lib/charges.ts';
+import { axisFor, buildTimeline } from '../lib/timeline.ts';
 /* lib/reminders.ts imports nothing but a type, which is what makes it safe to run here — the cross-lib
  * value-import trap in AGENTS.md is exactly why the ladder lives in its own file rather than in store.ts. */
 import { ladderSentence, nudgeStanding, reminderPoints } from '../lib/reminders.ts';
@@ -2055,6 +2056,52 @@ report(
     })(),
     'X8-inj', 'the budget is one the old O(n²) implementation could not meet',
     `so ${PERF_BUDGET_MS}ms is a wall rather than a formality`,
+);
+
+
+/* ================================================================================================
+ * THE TIMELINE'S AXIS IS IN THE READER'S ZONE — asserted here because it needs no server.
+ *
+ * Every absolute time in this hub was UTC, for a documented and correct reason: a server-rendered page whose
+ * dates come from the machine's own timezone renders differently in Node and in the browser. The result was
+ * still wrong for the person reading it. The owner is in Georgia, UTC+4, and read a chart of his own night
+ * four hours out of step with his own clock: "the timeline is wrong. It's not adapted to my timeline."
+ *
+ * The fix keeps the determinism — the SERVER formats, in a zone it looked up and stored — and these
+ * assertions are what stop it regressing to UTC-everywhere or to something that formats per machine.
+ * ============================================================================================== */
+const AXIS_TO = Date.UTC(2026, 7, 13, 9, 0);
+const AXIS_FROM = AXIS_TO - 24 * 3600e3;
+const axisLabels = zone => axisFor(AXIS_FROM, AXIS_TO, zone).map(m => m.label);
+const onTheHour = zone => axisLabels(zone).every(l => /^[0-9][0-9]:00$/.test(l) || /^[0-9]+ [A-Z]/.test(l));
+
+report(
+    axisLabels('UTC')[0] === '09:00' && axisLabels('Asia/Tbilisi')[0] === '15:00',
+    'Z1', 'the axis is labelled in the zone it is given',
+    `UTC starts ${axisLabels('UTC')[0]}, Tbilisi starts ${axisLabels('Asia/Tbilisi')[0]}`,
+);
+report(
+    onTheHour('Asia/Tbilisi'),
+    'Z2', "every label lands on a whole hour of the reader's clock",
+    'a zone aligned to UTC boundaries instead would read 13:00, 16:00, 19:00',
+);
+/* A HALF-HOUR ZONE, because it is the case a minutes-offset implementation gets wrong and nothing else
+ * would reveal. India is +5:30, and its labels must still be on the hour. */
+report(
+    onTheHour('Asia/Kolkata'),
+    'Z3', 'a half-hour zone still gets labels on the hour',
+    `Kolkata: ${axisLabels('Asia/Kolkata').join(' ')}`,
+);
+report(
+    axisLabels('UTC').join() !== axisLabels('America/New_York').join(),
+    'Z4-inj', 'the zone actually changes the output',
+    'if these matched, the parameter would be ignored and every assertion above would be vacuous',
+);
+/* The view CARRIES the zone, so a component cannot label a block in a different one from its own axis. */
+report(
+    buildTimeline([], [], AXIS_TO, 1000, 'Asia/Tbilisi').zone === 'Asia/Tbilisi',
+    'Z5', 'the view carries the zone it was built in',
+    'two clocks on one chart disagreeing by four hours is worse than both being wrong the same way',
 );
 
 console.log(failures === 0

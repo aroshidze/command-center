@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
 import { hasWebSession } from '../../../lib/auth';
 import { LOOKS_COOKIE, parseLooks, resolveLooks } from '../../../lib/looks';
-import { readLooksPreference } from '../../../lib/settings';
+import { readLooksPreference, readTimezone } from '../../../lib/settings';
 import { paletteCss } from '../../../lib/palettes';
 import { surfaceCss } from '../../../lib/surfaces';
 import { deriveWholeRecord, marks as marksOf, standing as standingOf } from '../../../lib/progress';
@@ -29,6 +29,7 @@ import Attention from '../../components/Attention';
 import SayMore from '../../components/SayMore';
 import Forget from '../../components/Forget';
 import Approvals from '../../components/Approvals';
+import Zone from '../../components/Zone';
 
 export const dynamic = 'force-dynamic';
 
@@ -134,9 +135,17 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
      * so two lines on this page can never disagree about whether something is inside the live window. */
     const now = Date.now();
 
+    /*
+     * HIS OWN CLOCK, read once and used for every absolute time on the page.
+     *
+     * One read, one value: the axis, the block labels and the presence sentence cannot disagree about when
+     * "last night" was, which is the property the old UTC-everywhere rule was protecting and this keeps.
+     */
+    const zone = await readTimezone();
+
     const [presence] = foldProjects([view.project], view.presence, now);
-    const sentence = presence ? sentenceFor(presence, now) : null;
-    const runs = buildTimeline(view.sessions, view.subagents, now);
+    const sentence = presence ? sentenceFor(presence, now, zone) : null;
+    const runs = buildTimeline(view.sessions, view.subagents, now, 1000, zone);
 
     /*
      * THE LATEST WORD PER CONVERSATION, newest first — and `said` only.
@@ -176,6 +185,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                   * child of Agents rather than a peer of it, so the crumb below is the way back.
                   */}
                 <Nav here="agents" />
+                {/* Reports the browser's zone when it differs from what this render used. No UI. */}
+                <Zone stored={zone} />
 
                 <header>
                     <div className="top">

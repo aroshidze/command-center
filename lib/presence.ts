@@ -337,7 +337,7 @@ export function foldAgents(rows: PresenceRow[], now: number = Date.now()): Agent
  * `now` is injectable for the same reason `humanDate` takes it: a sentence about elapsed time cannot be
  * asserted against a clock the check does not control.
  */
-export function sentenceFor(p: ProjectPresence, now: number = Date.now()): string {
+export function sentenceFor(p: ProjectPresence, now: number = Date.now(), zone = 'UTC'): string {
     switch (p.state) {
         case 'working':
             /*
@@ -381,7 +381,7 @@ export function sentenceFor(p: ProjectPresence, now: number = Date.now()): strin
         case 'quiet':
             /* The brief's own sentence. Subject is "nothing", which is what makes it a fact about the
              * agents rather than about him. */
-            return `Nothing has looked at ${p.project} since ${humanDate(p.lastSeenAt!, new Date(now))}`;
+            return `Nothing has looked at ${p.project} since ${humanDate(p.lastSeenAt!, new Date(now), zone)}`;
 
         case 'never':
             /*

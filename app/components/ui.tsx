@@ -10,7 +10,7 @@ export { projectColor, projectHue } from '../../lib/colour';
  * builds a sentence containing a date and is imported by a server page and by tests/*.mjs, neither of which can
  * import a 'use client' module. The alternative was a second UTC date formatter, which is the mistake
  * lib/colour.ts already exists to undo. See lib/format.ts. */
-export { humanAgo, humanCount, humanDate, humanMinutes, humanSpan } from '../../lib/format';
+export { clockIn, humanAgo, humanCount, humanDate, humanMinutes, humanSpan } from '../../lib/format';
 import type { Question } from '../../lib/types';
 
 /**

@@ -2,7 +2,9 @@ import { cookies } from 'next/headers';
 import { hasWebSession } from '../../../../lib/auth';
 import { finishBySlug } from '../../../../lib/finishes';
 import { LOOKS_COOKIE, parseLooks, resolveLooks } from '../../../../lib/looks';
-import { LOOKS_SETTING, readLooksPreference, writeSetting } from '../../../../lib/settings';
+import {
+    LOOKS_SETTING, TIMEZONE_SETTING, readLooksPreference, validTimezone, writeSetting,
+} from '../../../../lib/settings';
 import { paletteBySlug } from '../../../../lib/palettes';
 import { surfaceBySlug } from '../../../../lib/surfaces';
 import { deriveWholeRecord, marks as marksOf, standing as standingOf } from '../../../../lib/progress';
@@ -169,6 +171,23 @@ async function handle(req: Request) {
              * Here rather than on an agent route on purpose: deciding that a project is a phantom is a
              * judgement only the human can make, and this door needs the web session.
              */
+            /*
+             * WHICH TIMEZONE TO RENDER ABSOLUTE TIMES IN, reported by the browser rather than chosen.
+             *
+             * The value is browser-supplied, so it is validated against the platform's own zone database
+             * before it is stored — `validTimezone` asks `Intl` rather than consulting a hardcoded list that
+             * would go out of date on its own. An unknown zone is refused rather than stored and worked
+             * around later, because every absolute time in the hub is rendered through it.
+             */
+            case 'zone.set': {
+                const zone = validTimezone(body.zone);
+                if (!zone) {
+                    return json({ ok: false, error: `"${String(body.zone)}" is not a timezone this platform knows` }, 400);
+                }
+                await writeSetting(TIMEZONE_SETTING, zone);
+                return json({ ok: true, saved: true, zone });
+            }
+
             case 'project.forget': {
                 const slug = String(body.project ?? '');
                 if (!slug) return json({ ok: false, error: '`project` is required' }, 400);

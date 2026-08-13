@@ -68,11 +68,53 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  *
  * `now` is injectable so a check can assert the year-suffix rule without waiting for January.
  */
-export function humanDate(isoString: string, now: Date = new Date()): string {
-    const d = new Date(isoString);
-    const year = d.getUTCFullYear();
-    const suffix = year === now.getUTCFullYear() ? '' : ` ${String(year).slice(2)}`;
-    return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}${suffix}`;
+export function humanDate(isoString: string, now: Date = new Date(), zone = 'UTC'): string {
+    const d = partsIn(new Date(isoString).getTime(), zone);
+    const here = partsIn(now.getTime(), zone);
+    const suffix = d.year === here.year ? '' : ` ${String(d.year).slice(2)}`;
+    return `${d.day} ${MONTHS[d.month]}${suffix}`;
+}
+
+/**
+ * THE CALENDAR FIELDS OF AN INSTANT, IN A GIVEN ZONE — the one place this hub converts.
+ *
+ * `Intl.DateTimeFormat` with a `timeZone` is the only correct way to do this: an offset in minutes looks
+ * simpler and is wrong twice a year in most of the world, and this hub is public now. `Intl` is a global, so
+ * this file still imports nothing and stays loadable by the proof suites through type-stripping (AGENTS.md
+ * trap 2) — which is the constraint that decided the shape of every formatter here.
+ *
+ * `en-GB` and explicit two-digit parts so the output is fixed regardless of the machine's locale. That is the
+ * half of the old UTC-only rule worth keeping: the SERVER formats, and the same input gives the same string
+ * on every machine that runs it, so hydration cannot disagree.
+ *
+ * `hour12: false` matters more than it looks. Left to the locale, midnight formats as `24` in some and `00`
+ * in others, and the axis decides what is a day boundary by testing for zero.
+ */
+export function partsIn(ms: number, zone: string): {
+    year: number; month: number; day: number; hour: number; minute: number;
+} {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: zone,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(new Date(ms));
+    const get = (type: string): number => Number(parts.find(p => p.type === type)?.value ?? 0);
+    return {
+        year: get('year'),
+        /* Zero-based, to index MONTHS the way getUTCMonth did — so every caller that already worked keeps
+         * working rather than being off by one in a way only January would reveal. */
+        month: get('month') - 1,
+        day: get('day'),
+        hour: get('hour') % 24,
+        minute: get('minute'),
+    };
+}
+
+/** "14:32" in a given zone. The clock a block on the timeline is labelled with. */
+export function clockIn(ms: number, zone: string): string {
+    const { hour, minute } = partsIn(ms, zone);
+    const pad = (n: number): string => (n < 10 ? `0${n}` : String(n));
+    return `${pad(hour)}:${pad(minute)}`;
 }
 
 /** "20 min ago", "6h ago", "9 days ago". `now` injectable for the same reason as `humanDate`. */

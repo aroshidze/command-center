@@ -93,6 +93,68 @@ export async function writeSetting(key: string, value: string): Promise<void> {
 /** The key the chosen look is stored under. One row, because this hub has exactly one human. */
 export const LOOKS_SETTING = 'looks';
 
+/** The IANA name of the timezone every absolute time in this hub is rendered in. */
+export const TIMEZONE_SETTING = 'timezone';
+
+/**
+ * IS THIS A REAL TIMEZONE? Asked of the runtime rather than of a list.
+ *
+ * `Intl.DateTimeFormat` throws `RangeError` on an unknown `timeZone`, so the platform's own database is the
+ * validator. A hardcoded list would be a second copy of something that ships with Node and goes out of date
+ * on its own — and this value is written from a browser-supplied string, so it must be checked rather than
+ * trusted.
+ */
+export function validTimezone(zone: unknown): string | null {
+    if (typeof zone !== 'string' || !zone || zone.length > 64) return null;
+    try {
+        new Intl.DateTimeFormat('en-GB', { timeZone: zone }).format(new Date(0));
+        return zone;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * WHICH TIMEZONE TO RENDER ABSOLUTE TIMES IN. `UTC` until something says otherwise.
+ *
+ * ==================================================================================================
+ * WHY THIS IS STORED RATHER THAN DETECTED AT RENDER TIME
+ * ==================================================================================================
+ *
+ * Every absolute time in this hub was UTC, deliberately, and `humanDate`'s own header gives the reason: the
+ * pages are server-rendered and then hydrated, so a formatter that reads the machine's timezone produces one
+ * string in Node and a different one in the browser — a hydration mismatch in the part of the interface whose
+ * entire job is to be trustworthy. That reasoning is still correct.
+ *
+ * It was also, in practice, wrong for the person reading it. He is in Georgia, UTC+4, and the chart's axis
+ * was four hours out of step with his own clock: *"the timeline is wrong. It's not adapted to my timeline…
+ * I do not know on what time it operates."* A chart of last night that disagrees with the reader about when
+ * last night was is not a small inaccuracy — it is the one claim the chart exists to make.
+ *
+ * So the zone is a stored value, read on the server, and the rendering stays deterministic: the SERVER
+ * formats, in a zone it looked up, and the client is handed strings. Nothing formats differently in the two
+ * places, so the hydration property is kept rather than traded away.
+ *
+ * ==================================================================================================
+ * AND IT IS DETECTED, NOT ASKED FOR
+ * ==================================================================================================
+ *
+ * The browser already knows — `Intl.DateTimeFormat().resolvedOptions().timeZone` — so a question would be a
+ * setup step for a fact the machine can supply. `app/components/Zone.tsx` posts it once when it differs from
+ * what the server used, which is once ever on a new hub and once more if he moves.
+ */
+export async function readTimezone(): Promise<string> {
+    try {
+        return validTimezone(await readSetting(TIMEZONE_SETTING)) ?? 'UTC';
+    } catch (e) {
+        /* Same rule as the look: a database that cannot be read costs him the timezone and never the page.
+         * UTC is the honest fallback rather than a guess at his location. */
+        console.error('[settings] could not read the timezone; rendering in UTC:',
+            e instanceof Error ? e.message : e);
+        return 'UTC';
+    }
+}
+
 /**
  * The stored look, falling back to the cookie and then to nothing.
  *
