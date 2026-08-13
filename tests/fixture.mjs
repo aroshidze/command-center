@@ -247,6 +247,9 @@ async function clear() {
      * saying an agent is blocked on a question that was answered days ago, at the very top of the surface,
      * which is worse than a stale figure — it is a stale INSTRUCTION. */
     await db`delete from reports`;
+    /* And the briefs, for the same reason: a leftover one is a paragraph asserting where a project stands,
+     * at the top of its page, written by a fixture that ran last week. */
+    await db`delete from briefs`;
 }
 
 async function post(path, body) {
@@ -1211,6 +1214,40 @@ if (UNSTARTED) {
          * itself. */
         await report(P.c, 'codex', 'fixture-open', 'waiting', 22,
             'Codex needs your permission to run: rm -rf .next && npm run build');
+
+        /*
+         * ==============================================================================================
+         * WHERE EACH PROJECT STANDS — the briefs the digest and the project pages are made of.
+         * ==============================================================================================
+         *
+         * THREE OF FOUR PROJECTS, deliberately. `cold-brew` gets none, because a project whose agent has
+         * never filed one is what every project looks like on the day this ships, and the digest has to be
+         * readable while it is incomplete — a list that only works once everything is filled in is a list
+         * that never works.
+         *
+         * One of them is BLOCKED, because that is the row the whole digest is scanned for and a fixture
+         * without one would leave the warning path unrendered. One has no `next`, because the field is
+         * optional and a fixture where every column is populated hides what an absent one looks like.
+         */
+        const brief = async (project, agent, minutesAgo, standing, did, next, blocked) => {
+            await db`
+                insert into briefs (id, project, agent, session, standing, did, next, blocked, at)
+                values (${`bfx${Math.random().toString(36).slice(2, 10)}`}, ${project}, ${agent},
+                        'fixture-working', ${standing}, ${did}, ${next}, ${blocked}, ${agoMin(minutesAgo)})`;
+        };
+        await brief(P.big, 'claude-code', 12,
+            'The payload work is done and measured; what is left is the cache-read price nobody publishes.',
+            'Fixed the rate table and both call sites; the total moved from $11,904 to $12,847.',
+            'Decide whether to exclude opus-4-8 from the total or price it as opus-5 and say so.',
+            null);
+        await brief(P.b, 'claude-code', 60 * 4,
+            'Two of the three empty states are rebuilt. The third needs a decision that is with him.',
+            'Moved the empty state up a level and removed the duplicate heading.',
+            null,
+            'Waiting on the bucket decision — the catalogue import cannot start without it.');
+        await brief(P.a, 'cursor', 60 * 24 * 6,
+            'Untouched for a week. The last thing anybody did was read the pricing pages.',
+            null, null, null);
 
         const spend = async (project, model, i, o, cw1h, cr, n) => {
             await db`

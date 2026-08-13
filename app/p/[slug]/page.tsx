@@ -30,6 +30,7 @@ import SayMore from '../../components/SayMore';
 import Forget from '../../components/Forget';
 import Approvals from '../../components/Approvals';
 import Zone from '../../components/Zone';
+import Standing from '../../components/Standing';
 
 export const dynamic = 'force-dynamic';
 
@@ -251,6 +252,16 @@ export default async function ProjectPage({ params }: { params: Promise<{ slug: 
                         ))}
                     </ul>
                 )}
+
+                {/*
+                  * WHERE IT STANDS, ABOVE THE RAW WORDS — and that order is the whole argument for briefs.
+                  *
+                  * Eleven projects means eleven agents each talking about a rate table, and nobody reads
+                  * eleven paragraphs. A brief is one line about where the work IS, written by the agent that
+                  * did it. The reports stay directly underneath, so the summary is never the only copy:
+                  * anything it claims can be checked against what was actually said.
+                  */}
+                {view.briefs.length > 0 && <Standing brief={view.briefs[0]} />}
 
                 {/*
                   * WHAT WAS JUST SAID. The richest thing on the page and the cheapest to be honest about:

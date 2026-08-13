@@ -40,6 +40,13 @@ export const newSubagentId = () => `s${short()}`;
  * collision became worth thinking about, and the primary key rejects one loudly if it ever happens.
  */
 export const newReportId = () => `r${short()}`;
+/**
+ * One brief — where a project stood at a moment, as the agent that did the work saw it.
+ *
+ * `b` rather than something longer for the same reason as the rest: these are read in URLs and logs by
+ * people, and eight characters of base36 is ample against a table that gains a handful of rows a day.
+ */
+export const newBriefId = () => `b${short()}`;
 
 /** Option keys and idempotency keys must be predictable and URL/callback safe. */
 export const KEY_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;

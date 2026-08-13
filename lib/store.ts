@@ -1,7 +1,7 @@
 import { ensureSchema, sql, writeVerified, WriteFailed } from './db';
 import {
-    newApprovalId, newNoteId, newQuestionId, newReportId, newSubagentId, newTaskId, KEY_RE,
-    OPTION_KEY_RE,
+    newApprovalId, newBriefId, newNoteId, newQuestionId, newReportId, newSubagentId, newTaskId,
+    KEY_RE, OPTION_KEY_RE,
 } from './ids';
 import type { PresenceRow } from './presence';
 import {
@@ -1795,6 +1795,151 @@ export async function recordReport(
     return { project: proj, session: conversation, run, kind, redacted, stored: true };
 }
 
+export interface Brief {
+    id: string;
+    project: string;
+    agent: string;
+    session: string | null;
+    standing: string;
+    did: string | null;
+    next: string | null;
+    blocked: string | null;
+    at: string;
+}
+
+export interface BriefInput {
+    project: unknown;
+    standing: unknown;
+    session?: unknown;
+    did?: unknown;
+    next?: unknown;
+    blocked?: unknown;
+}
+
+function mapBrief(r: Row): Brief {
+    return {
+        id: String(r.id),
+        project: String(r.project),
+        agent: String(r.agent),
+        session: r.session == null ? null : String(r.session),
+        standing: String(r.standing),
+        did: r.did == null ? null : String(r.did),
+        next: r.next == null ? null : String(r.next),
+        blocked: r.blocked == null ? null : String(r.blocked),
+        at: iso(r.at)!,
+    };
+}
+
+/** How long a line of a brief may be. Two hundred characters — about a sentence and a half. */
+export const BRIEF_LINE_MAX = 200;
+
+/**
+ * WHERE A PROJECT STANDS, AS THE AGENT THAT DID THE WORK SEES IT.
+ *
+ * ==================================================================================================
+ * THE ONE FIELD THAT IS REQUIRED, AND WHY THE OTHERS ARE NOT
+ * ==================================================================================================
+ *
+ * `standing` is mandatory: a brief with nothing to say about where things stand is not a brief. `did`,
+ * `next` and `blocked` are optional because a session that only investigated has no "did", and a project
+ * that is not stuck has no "blocked" — and a field filled in to look complete is exactly what this whole
+ * schema is built against. An empty string is stored as NULL rather than as a blank, so the page can tell
+ * "nothing to report here" from "reported nothing".
+ *
+ * ==================================================================================================
+ * IT IS APPENDED, NEVER UPDATED
+ * ==================================================================================================
+ *
+ * No upsert and no idempotency key, deliberately, and this is the difference between a brief and a status.
+ * Two briefs an hour apart are two things that were true at two moments, and the second does not correct
+ * the first — it follows it. The page shows the newest with its age; the rest are history, and history is
+ * what makes a rosy brief checkable against what happened next.
+ *
+ * Every line goes through `sanitiseForDisplay` and the secret scanner, like every other string an agent
+ * sends that a person will read.
+ */
+export async function recordBrief(
+    input: BriefInput, agent: string,
+): Promise<{ brief: Brief; redacted: boolean }> {
+    await ensureSchema();
+    const proj = project(input.project);
+    const session = input.session == null || input.session === '' ? null : sessionId(input.session);
+
+    let redacted = false;
+    const line = (v: unknown, field: string, required: boolean): string | null => {
+        if (v == null || v === '') {
+            if (required) {
+                throw new Invalid(
+                    `${field} is required. A brief says where the project stands in one line; if there is `
+                    + 'nothing to say about that, there is nothing to file.',
+                );
+            }
+            return null;
+        }
+        const shown = sanitiseForDisplay(String(v), BRIEF_LINE_MAX, `(no ${field})`);
+        const safe = redactSecrets(shown.text, findSecret);
+        if (safe.redacted) redacted = true;
+        return safe.text;
+    };
+
+    const standing = line(input.standing, 'standing', true)!;
+    const did = line(input.did, 'did', false);
+    const nextUp = line(input.next, 'next', false);
+    const blocked = line(input.blocked, 'blocked', false);
+
+    const id = newBriefId();
+    const row = await writeVerified<Row>({
+        what: `record where ${proj} stands`,
+        write: () => sql()`
+            insert into briefs (id, project, agent, session, standing, did, next, blocked)
+            values (${id}, ${proj}, ${agent}, ${session}, ${standing}, ${did}, ${nextUp}, ${blocked})
+            returning *
+        ` as Promise<Row[]>,
+        reread: () => sql()`select * from briefs where id = ${id}` as Promise<Row[]>,
+        expect: r => {
+            if (String(r.project) !== proj) return `project is "${String(r.project)}"`;
+            if (String(r.standing) !== standing) return 'the stored standing is not what was sent';
+            return null;
+        },
+    });
+
+    /*
+     * AN EVENT, so a brief reaches the agent contract as well as the page. `cc sync` hands back what has
+     * changed since an agent last looked, and "somebody wrote down where this project stands" is squarely
+     * that — it is how a second agent picking the project up tomorrow learns there is a brief worth reading.
+     */
+    await logEvent('brief.filed', proj, id, `${agent}: ${standing}`);
+
+    return { brief: mapBrief(row), redacted };
+}
+
+/** One project's briefs, newest first. Capped: the page shows one and links to the rest. */
+export async function projectBriefs(slug: string, limit = 12): Promise<Brief[]> {
+    await ensureSchema();
+    const proj = project(slug);
+    const rows = await sql()`
+        select * from briefs where project = ${proj}
+         order by at desc limit ${Math.min(Math.max(1, Math.round(limit)), 50)}
+    ` as Row[];
+    return rows.map(mapBrief);
+}
+
+/**
+ * THE NEWEST BRIEF PER PROJECT — the whole cross-project digest, and it costs no model call at all.
+ *
+ * This is the answer to *"one line across everything"*. It is not generated: it is the newest thing each
+ * project's own agent wrote about where that project stands, one row each, folded by the database. So the
+ * expensive half of what he asked about turned out not to need a model — only the per-project half does,
+ * and that is written by an agent on a subscription he already pays for.
+ */
+export async function latestBriefs(): Promise<Brief[]> {
+    await ensureSchema();
+    const rows = await sql()`
+        select distinct on (project) * from briefs order by project, at desc
+    ` as Row[];
+    return rows.map(mapBrief).sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+}
+
 function mapReport(r: Row): Report {
     return {
         id: String(r.id),
@@ -2880,11 +3025,19 @@ export async function agentsView(): Promise<{
     spend: SpendRow[];
     /** The newest report per conversation — one row each, never the log. See `latestReports`. */
     reports: Report[];
+    /**
+     * THE CROSS-PROJECT DIGEST, and it costs no model call at all.
+     *
+     * "One line across everything" turned out not to need a summariser: it is the newest thing each
+     * project's own agent wrote about where that project stands, one row each, folded by `distinct on`.
+     */
+    briefs: Brief[];
 }> {
-    const [projectList, presence, sessions, subagents, spend, reports] = await Promise.all([
+    const [projectList, presence, sessions, subagents, spend, reports, briefs] = await Promise.all([
         projects(), presenceRows(), sessionWindow(), subagentWindow(), spendRows(), latestReports(),
+        latestBriefs(),
     ]);
-    return { projects: projectList, presence, sessions, subagents, spend, reports };
+    return { projects: projectList, presence, sessions, subagents, spend, reports, briefs };
 }
 
 /**
@@ -2914,6 +3067,7 @@ export async function projectView(slug: string): Promise<{
     sessions: SessionRow[];
     subagents: SubagentRow[];
     reports: Report[];
+    briefs: Brief[];
     openQuestions: Question[];
     answeredQuestions: Question[];
     openTasks: Task[];
@@ -2925,12 +3079,13 @@ export async function projectView(slug: string): Promise<{
     await ensureSchema();
     const proj = project(slug);
 
-    const [presence, sessions, subagents, reports, questionRows, taskRows, noteRows, approvals, spend]
-        = await Promise.all([
+    const [presence, sessions, subagents, reports, briefs, questionRows, taskRows, noteRows, approvals,
+        spend] = await Promise.all([
             presenceRows(),
             sessionWindow(),
             subagentWindow(),
             projectReports(proj),
+            projectBriefs(proj),
             sql()`
                 select * from questions
                  where project = ${proj}
@@ -2964,7 +3119,7 @@ export async function projectView(slug: string): Promise<{
      */
     const known = presence.some(p => p.project === proj)
         || questions.length > 0 || tasks.length > 0 || noteRows.length > 0
-        || reports.length > 0
+        || reports.length > 0 || briefs.length > 0
         || spend.some(s => s.project === proj && s.samples > 0);
 
     return {
@@ -2974,6 +3129,7 @@ export async function projectView(slug: string): Promise<{
         sessions: sessions.filter(s => s.project === proj),
         subagents: subagents.filter(s => s.project === proj),
         reports,
+        briefs,
         openQuestions: questions.filter(q => q.status === 'open'),
         answeredQuestions: questions.filter(q => q.status !== 'open'),
         openTasks: tasks.filter(t => t.status === 'open'),

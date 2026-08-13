@@ -238,6 +238,45 @@ believing the channel works and believing it does not. When you do find a note, 
 note that was collected and ignored is worse than one that was never collected, because the hub told him it
 had been picked up.
 
+### Where this project stands — file it, do not make him read the transcript
+
+\`\`\`bash
+node "$HOME/.command-center/cc.mjs" brief '{
+  "standing": "one line: where the work actually is",
+  "did":      "what moved this session",
+  "next":     "what happens next",
+  "blocked":  "what is in the way, or leave it out"
+}'
+\`\`\`
+
+**WHY THIS EXISTS, AND IT IS NOT A STATUS REPORT.** He has eleven projects. The hub already shows the last
+thing each agent said, which means eleven paragraphs about eleven rate tables, and nobody reads eleven
+paragraphs. What he asked for is what a chief of staff would give him: one line per project about where the
+work is, and one place to see all of them.
+
+The hub could generate these by summarising your reports with an API call. It deliberately does not, for two
+reasons — it would put a paid API key into the setup of a tool other people install, and **your version is
+better anyway**, because you have the whole session in context and a summariser would be reading
+400-character excerpts of it.
+
+**\`standing\` is the only required field.** Leave the others out when they are empty rather than filling them
+in to look complete — a brief with a made-up "next" is worse than one without it.
+
+**\`blocked\` is asked for separately on purpose, and it is the field that makes the rest believable.** An
+agent asked how it is going says fine. Put what is genuinely in the way there, including "nothing" being
+absent. His page shows it in warning colour next to the project name, which is how he decides where to look
+first.
+
+**FILE ONE WHEN SOMETHING LANDS AND AT THE END OF A SESSION**, not on a timer. A brief is a judgement about a
+body of work; one per turn would recreate the eleven-paragraphs problem with more words. Two an hour apart are
+two moments, not a correction — nothing is overwritten, and the old ones stay as the record that makes an
+optimistic brief checkable against what happened next.
+
+**IT IS SHOWN WITH YOUR NAME AND ITS AGE ON IT**, above the raw reports it was drawn from and beside the facts
+the hub derives for itself — open tasks, last activity, what actually ran. So a brief claiming "nearly done"
+over nine open tasks and a week of silence has published its own contradiction. Write the one you would want
+to read if you were picking this project up tomorrow with no memory of today.
+
 ### Four things that are OFF until a command is run — and the first one belongs in onboarding
 
 Nothing below happens unless somebody runs the command, and a project that runs none of them behaves exactly

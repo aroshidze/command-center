@@ -19,6 +19,9 @@ import Presence from '../components/Presence';
 import Runs from '../components/Runs';
 import CopyBlock from '../components/CopyBlock';
 import Zone from '../components/Zone';
+/* From lib/colour.ts and not through components/ui.tsx, which is a 'use client' module: importing a
+ * function through it from a server component throws at request time. See the project page's note. */
+import { projectColor as projectColour } from '../../lib/colour';
 
 export const dynamic = 'force-dynamic';
 
@@ -375,6 +378,55 @@ export default async function AgentsPage() {
                                     ))}
                                 </ul>
                             </section>
+                        )}
+
+                        {/*
+                          * THE DIGEST, ABOVE THE CHART — one line per project, and it is the answer to
+                          * *"as if a person was sitting in my command center."*
+                          *
+                          * It is FOLDED, not generated: the newest brief each project's own agent wrote,
+                          * one row each. So it costs no model call, it cannot say anything no agent said,
+                          * and every line names who said it and when. Above the chart because "where are
+                          * my projects" is read before "what ran last night", and there is no point
+                          * putting the answer under a picture of the question.
+                          *
+                          * Rendered only when at least one project has a brief. An empty digest would be a
+                          * heading over nothing, which is the shape this page has already shipped twice.
+                          */}
+                        {view.briefs.length > 0 && (
+                            <>
+                                <h2>Where things stand</h2>
+                                <ul className="digest" data-measure="digest">
+                                    {view.briefs.map(b => (
+                                        <li
+                                            key={b.project}
+                                            className="digrow"
+                                            data-measure="digest-row"
+                                            data-project={b.project}
+                                            style={{ ['--proj' as string]: projectColour(b.project) }}
+                                        >
+                                            <span className="pdot" style={{ background: projectColour(b.project) }} />
+                                            <a className="digname" href={`/p/${encodeURIComponent(b.project)}`}>
+                                                {b.project}
+                                            </a>
+                                            <span className="digsay">{b.standing}</span>
+                                            {/*
+                                              * BOTH, NOT EITHER. The first version showed "stuck" INSTEAD
+                                              * of the age, which threw away the actionable half: a project
+                                              * stuck for twenty minutes and one stuck for six days are the
+                                              * same word and opposite situations. The marker says which
+                                              * ones to look at; the age says which one first.
+                                              */}
+                                            <span className="digend">
+                                                {b.blocked && (
+                                                    <span className="digblocked" title={b.blocked}>stuck</span>
+                                                )}
+                                                <span className="digwhen">{humanAgo(b.at)}</span>
+                                            </span>
+                                        </li>
+                                    ))}
+                                </ul>
+                            </>
                         )}
 
                         {runs.total > 0 && <Runs view={runs} now={now} />}

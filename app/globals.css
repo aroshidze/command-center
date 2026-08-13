@@ -1777,6 +1777,74 @@
     .waitsay { color: var(--dim); font-size: var(--t-sm); }
     .waitwhere { color: var(--mute); font-size: var(--t-xs); white-space: nowrap; }
 
+    /* ============================================================================================
+     * WHERE IT STANDS — one brief, and the attribution is part of the design rather than a caption.
+     *
+     * The strongest visual weight on the project page, because it is the one thing on it that answers
+     * "what is going on here" in a single line. It earns that weight by carrying its author and its age in
+     * the same row as its heading: a paragraph asserting where a project stands is only admissible while
+     * you can see who said it and how long ago, and a treatment that hid either would make it exactly the
+     * maintained status field this hub refuses everywhere else.
+     * ========================================================================================== */
+    .standing {
+        margin-top: var(--sp-3); padding: var(--sp-3);
+        background: var(--s1); border: 1px solid var(--line); border-radius: var(--radius);
+        box-shadow: var(--edge), inset 3px 0 0 0 var(--proj, transparent);
+    }
+    .standhead { display: flex; align-items: baseline; gap: var(--sp-2); flex-wrap: wrap; }
+    .standhead h2 { margin: 0; font-size: var(--t-lg); }
+    .standwho {
+        font-family: var(--mono); font-size: var(--t-xs); color: var(--dim);
+    }
+    /* Pushed to the far end so the age is always in the same place regardless of how long a name is —
+       a timestamp that moves horizontally is a timestamp you stop checking. */
+    .standwhen { font-family: var(--mono); font-size: var(--t-xs); color: var(--mute); margin-left: auto; }
+    .standnow {
+        margin: var(--sp-2) 0 0; color: var(--text); font-size: var(--t-lg);
+        line-height: var(--lh-tight);
+    }
+    .standrest { margin: var(--sp-2) 0 0; display: grid; gap: var(--sp-1); }
+    /* 11ch, not 9: "in the way" is ten characters and overflowed a 9ch track, which pushed its own line
+       left and left the three labels reading as two aligned rows and one stray. Measured at 2x. */
+    .standrow { display: grid; grid-template-columns: 11ch 1fr; gap: var(--sp-2); align-items: baseline; }
+    .standrow dt {
+        font-size: var(--t-xs); color: var(--mute);
+        letter-spacing: var(--track-caps); text-transform: uppercase;
+    }
+    .standrow dd { margin: 0; color: var(--dim); font-size: var(--t-md); }
+    /*
+     * IN THE WAY, IN THE WARNING COLOUR. Not `--bad`: nothing is broken, something is stuck, and spending
+     * the error colour here would leave nothing louder for a real failure. The same reasoning the waiting
+     * row above it already follows.
+     */
+    .standrow.blocked dt { color: var(--warn); }
+    .standrow.blocked dd { color: var(--text); }
+
+    /* ============================================================================================
+     * THE DIGEST — one line per project, on /agents. Folded from the newest brief of each, so it costs
+     * no model call and cannot say anything no agent said.
+     * ========================================================================================== */
+    .digest { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: grid; gap: 1px; }
+    .digrow {
+        display: grid; grid-template-columns: auto minmax(9ch, 16ch) 1fr auto;
+        gap: var(--sp-2); align-items: baseline;
+        padding: var(--sp-1) var(--sp-2); background: var(--s1);
+        border-left: 2px solid var(--proj, var(--line));
+        font-size: var(--t-sm);
+    }
+    .digrow:first-child { border-top-left-radius: var(--radius-sm); border-top-right-radius: var(--radius-sm); }
+    .digrow:last-child { border-bottom-left-radius: var(--radius-sm); border-bottom-right-radius: var(--radius-sm); }
+    .digname { color: var(--text); font-weight: var(--w-med); text-decoration: none; }
+    .digname:hover { text-decoration: underline; }
+    .digsay { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* A blocked project keeps its warning mark in the digest, because "which of these is stuck" is the
+       question the list is scanned for. */
+    .digblocked { color: var(--warn); font-size: var(--t-xs); white-space: nowrap; }
+    .digwhen { font-family: var(--mono); font-size: var(--t-xs); color: var(--mute); white-space: nowrap; }
+    /* The marker and the age together, right-aligned as one unit so the ages still line up down the column
+       whether or not a row is flagged. */
+    .digend { display: flex; align-items: baseline; gap: var(--sp-2); justify-content: flex-end; }
+
     /*
      * THE LATEST WORD — the richest thing on the page, and the one that had no channel until agents
      * started reporting what they said.

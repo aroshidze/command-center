@@ -326,6 +326,54 @@ export const SCHEMA_STATEMENTS: string[] = [
     `create unique index if not exists reports_moment_uniq on reports (project, session, kind, at)`,
 
     /* ------------------------------------------------------------------------------------------
+     * BRIEFS — WHERE A PROJECT STANDS, WRITTEN BY THE AGENT THAT DID THE WORK.
+     *
+     * THE PROBLEM THIS SOLVES IS NOT A MISSING FIELD, IT IS ELEVEN PARAGRAPHS. With eleven projects,
+     * "the latest word" is eleven agents each talking about a rate table. Nobody reads that. His own
+     * framing, and it is the right one: *"as if a person was sitting in my command center analyzing
+     * everything and understanding some key cool stuff that he should report to me."*
+     *
+     * WHY THE AGENT WRITES IT AND NOT THE HUB. The obvious build is a cron in the hub calling an API to
+     * summarise the reports. Measured against this hub's own price table it is about $1.50 a month, so
+     * cost is not the argument. Two other things are:
+     *
+     *   1. **It would put a paid API key in the setup of a public tool.** He said it plainly: it is
+     *      convenient for other people if the AI they already subscribe to does the work. An agent
+     *      writing this uses the subscription that is already running. Nothing to sign up for, no
+     *      credential, no bill.
+     *   2. **The agent's version is BETTER.** A hub-side summariser reads 400-character excerpts of what
+     *      was said. The agent that just spent six hours in the project has the whole thing in context.
+     *      The cheaper option is also the higher-quality one, which is rare enough to take seriously.
+     *
+     * WHY THIS IS NOT THE SELF-REPORTED STATUS `lib/presence.ts` REFUSES. That refusal is about a field
+     * asserting a CURRENT state that nothing keeps true — a green light left on overnight. Every row here
+     * is a snapshot with an author and a time, never updated, shown with its age beside it, and sitting
+     * next to the derived facts (open work, last activity, what ran) that can contradict it. AGENTS.md's
+     * test is *can it name who said it and when?* — `agent`, `session` and `at` are not optional.
+     *
+     * `blocked` IS ITS OWN COLUMN because asking for it separately is what stops a brief being a puff
+     * piece. An agent asked "how is it going" says fine; an agent asked "what is in the way" answers.
+     * ---------------------------------------------------------------------------------------- */
+    `create table if not exists briefs (
+        id        text primary key,
+        project   text not null,
+        agent     text not null,
+        session   text,
+        /* Where the project is, in one line. The only required field: a brief with nothing to say about
+           where things stand is not a brief. */
+        standing  text not null,
+        /* What just moved, what happens next, and what is in the way. All optional, because a session
+           that only investigated has no "did" and a project that is not stuck has no "blocked" — and a
+           column filled in to look complete is the thing this whole schema is built against. */
+        did       text,
+        next      text,
+        blocked   text,
+        at        timestamptz not null default now()
+    )`,
+    /* The two reads: the newest per project (the cross-project digest) and one project's history. */
+    `create index if not exists briefs_project_idx on briefs (project, at desc)`,
+
+    /* ------------------------------------------------------------------------------------------
      * SPEND — TOKENS, never money. The money is a fold over these numbers and a price table that
      * lives in lib/prices.ts, so a wrong price is fixed by deploying rather than by migrating.
      * ---------------------------------------------------------------------------------------- */
@@ -357,7 +405,7 @@ export const CORE_TABLES: string[] = ['agents', 'events', 'notes', 'questions', 
 
 /** Every table this schema creates, core plus the rest. */
 export const ALL_TABLES: string[] = [
-    ...CORE_TABLES, 'settings', 'presence', 'approvals', 'subagents', 'spend', 'reports',
+    ...CORE_TABLES, 'settings', 'presence', 'approvals', 'subagents', 'spend', 'reports', 'briefs',
 ];
 
 /**

@@ -22,6 +22,7 @@
  *   cc sync                     what changed since I last looked   ← the one to remember
  *   cc ask   '<json>'           ask the human a decision, do not block
  *   cc task  '<json>'           hand the human a piece of work
+ *   cc brief '<json>'           where this project stands, for the hub's digest
  *   cc onboard                  connect the project in this folder to the hub
  *   cc wait  <question-id>      block until answered (or the timed default fires)
  *   cc repush --open            resend open questions in the current Telegram format
@@ -775,6 +776,44 @@ switch (cmd) {
      *   cc onboard              this directory
      *   cc onboard --dry        show what would change
      */
+    /*
+     * ==========================================================================================
+     * WHERE THIS PROJECT STANDS. One line, plus three optional ones, written by the agent that did the
+     * work rather than generated from its leftovers.
+     * ==========================================================================================
+     *
+     *   cc brief '{"standing":"...","did":"...","next":"...","blocked":"..."}'
+     *
+     * `standing` is the only required field, and `blocked` is asked for separately on purpose: an agent
+     * asked how it is going says fine, and an agent asked what is in the way answers.
+     *
+     * WHY THIS IS A COMMAND AND NOT A HOOK. A brief is a judgement about a body of work, so it is worth
+     * writing at the points a person would write one — when something lands, when a session ends, when
+     * asked. A hook would fire it on a timer and produce eleven paragraphs nobody reads, which is the
+     * problem it exists to solve rather than a way to solve it.
+     */
+    case 'brief': {
+        const body = parseJsonArg('brief');
+        /* The project comes from the folder, the same rule every other command uses, so a brief
+         * cannot be filed against the wrong one by omitting a field. An explicit value still wins,
+         * for the cloud-agent case that has no meaningful cwd. */
+        body.project = body.project || flagValue('project') || projectFrom(process.cwd());
+        const r = await api('/api/agent/brief', { method: 'POST', body, cfg });
+        if (flags.has('--json')) { process.stdout.write(JSON.stringify(r, null, 2) + '\n'); break; }
+        const b = r.brief;
+        process.stdout.write(
+            `Filed where "${b.project}" stands (${b.id})\n`
+            + `  ${b.standing}\n`
+            + (b.did ? `  did:     ${b.did}\n` : '')
+            + (b.next ? `  next:    ${b.next}\n` : '')
+            + (b.blocked ? `  blocked: ${b.blocked}\n` : '')
+            + (r.redacted
+                ? '  (something in that looked like a credential and was redacted before storing)\n'
+                : ''),
+        );
+        break;
+    }
+
     case 'onboard': {
         const dir = process.cwd();
         const slug = flagValue('project') || projectFrom(dir);
@@ -2041,6 +2080,7 @@ switch (cmd) {
             `  cc sync                    what changed since I last looked\n` +
             `  cc ask '<json>'            ask the human a decision (does not block)\n` +
             `  cc task '<json>'           hand the human a piece of work\n` +
+            `  cc brief '<json>'          where this project stands, in a line\n` +
             `  cc onboard                 connect the project in this folder to the hub\n` +
             `  cc wait <question-id>      block until answered, or until the default fires\n` +
             `  cc repush --open           resend open questions in the current Telegram format\n` +

@@ -140,7 +140,17 @@ export type EventKind =
     | 'note.created'
     /* A note the human took back. The note.created event it refers to is deliberately NOT removed — see
      * removeNote in lib/store.ts. An agent that already read the note was not lied to. */
-    | 'note.withdrawn';
+    | 'note.withdrawn'
+    /*
+     * WHERE A PROJECT STANDS, filed by the agent that did the work. See `briefs` in lib/schema.ts.
+     *
+     * An event as well as a row, because a brief is the one thing in this hub that the NEXT agent most
+     * needs and would otherwise never learn about: `cc sync` hands back what changed since it last looked,
+     * and "somebody wrote down where this project stands" belongs in that list beside a filed task. It is
+     * how a second agent picking up tomorrow discovers there is a brief worth reading rather than starting
+     * from the raw transcript.
+     */
+    | 'brief.filed';
 
 export interface Event {
     seq: number;

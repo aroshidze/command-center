@@ -954,6 +954,14 @@ await check('the snippet every project gets covers every agent-facing behaviour'
          * because an agent that learns only the first half turns on the permission relay unasked.
          */
         ['that activity reporting belongs in onboarding', 'run it when you connect a project'],
+        /*
+         * WHERE THE PROJECT STANDS. Two rows, because the command alone is not the contract: an agent that
+         * learns `cc brief` exists but not that `blocked` is asked for separately files a puff piece, and a
+         * digest of eleven puff pieces is worse than no digest — it is a page that looks informative and is
+         * not. The second row is the one that keeps it honest.
+         */
+        ['the brief command', 'cc.mjs" brief'],
+        ['that blocked is asked for separately, and why', 'asked for separately on purpose'],
         ['that the other three must not be turned on unprompted', 'do not turn on unprompted'],
         ['how to switch presence on', /cc\.mjs"? presence on/],
         ['how to switch the permission relay on', /cc\.mjs"? approvals on/],
