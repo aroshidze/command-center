@@ -258,9 +258,8 @@ within minutes of your hub being updated rather than being discovered weeks late
 commands is the one nobody guesses:
 
 ```bash
-# 1. the CLI itself, served by your own hub
-curl -fsSL -H "Authorization: Bearer <your agent token>" <your-hub>/api/agent/cc.mjs \
-  -o "$HOME/.command-center/cc.mjs"
+# 1. the CLI itself. No arguments — it reads the hub and the token from the config it already has
+node "$HOME/.command-center/cc.mjs" update
 # 2. and the hooks, because the CLI is what writes them — an old settings file stays old
 node "$HOME/.command-center/cc.mjs" presence on     # in each project folder
 ```

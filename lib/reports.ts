@@ -104,9 +104,19 @@ export function stripInjectedContext(body: string): string {
     return body
         .replace(/<ide_[a-z_]*>[\s\S]*?<\/ide_[a-z_]*>/gi, ' ')
         .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
+        /*
+         * AND THE HARNESS'S OWN SLASH-COMMAND BOOKKEEPING. Measured in a real transcript: the newest thing
+         * that looked like a human message in a days-long session was
+         * `<local-command-stdout>Compacted </local-command-stdout>` — the output of `/compact`. Typing a slash
+         * command is a thing he did, but the wrapper around its plumbing is not something he SAID, and a
+         * thread whose newest entry is "Compacted" is a thread reporting on itself.
+         */
+        .replace(/<local-command-[a-z]*>[\s\S]*?<\/local-command-[a-z]*>/gi, ' ')
+        .replace(/<command-(?:name|message|args)>[\s\S]*?<\/command-(?:name|message|args)>/gi, ' ')
         /* An unclosed opener, which is what a truncated injection looks like. Dropped to the end rather than
          * left as a dangling tag name in the middle of his sentence. */
-        .replace(/<(?:ide_[a-z_]*|system-reminder)>[\s\S]*$/i, ' ')
+        .replace(/<(?:ide_[a-z_]*|system-reminder|local-command-[a-z]*|command-(?:name|message|args))>[\s\S]*$/i,
+            ' ')
         .replace(/[ \t]+/g, ' ')
         .trim();
 }

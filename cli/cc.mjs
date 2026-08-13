@@ -222,6 +222,8 @@ async function catchUpFromTranscript(project, cfg) {
     let best = null;
     let said = null;
     let saidAt = null;
+    let told = null;
+    let toldAt = null;
     for (const c of candidates.slice(0, 8)) {
         /*
          * THE TAIL, NOT THE FILE. These reach fifty megabytes and this runs on every sync. 256 KB covers many
@@ -246,6 +248,8 @@ async function catchUpFromTranscript(project, cfg) {
         let cwd = null;
         let text_ = null;
         let at = null;
+        let told_ = null;
+        let toldAt_ = null;
         for (const line of text.split('\n').slice(1)) {
             if (!line) continue;
             let m;
@@ -258,6 +262,23 @@ async function catchUpFromTranscript(project, cfg) {
                     .filter(b => b && b.type === 'text').map(b => b.text).join('\n').trim();
                 if (t) { text_ = t; at = m.timestamp || null; }
             }
+            /*
+             * AND HIS OWN WORDS, so a days-long session's thread reads as an exchange rather than a monologue.
+             *
+             * A `user` record is NOT necessarily a person: measured in one real transcript, 25 of 30 were
+             * tool results being fed back to the model and 5 were messages. Anything carrying a `tool_result`
+             * block is the harness talking to itself and is skipped here; the hub then strips the IDE and
+             * slash-command wrappers from what is left, and stores nothing if that empties it.
+             */
+            if (m.type === 'user' && m.message) {
+                const c = m.message.content;
+                let t = null;
+                if (typeof c === 'string') t = c.trim();
+                else if (Array.isArray(c) && !c.some(b => b && b.type === 'tool_result')) {
+                    t = c.filter(b => b && b.type === 'text').map(b => b.text).join('\n').trim();
+                }
+                if (t) { told_ = t; toldAt_ = m.timestamp || null; }
+            }
         }
         /* `cwd` DECIDES. Posting another project's words under this project's name is exactly how the
          * phantom-project defect worked, and this is the same mistake one layer along. */
@@ -265,6 +286,8 @@ async function catchUpFromTranscript(project, cfg) {
         best = c;
         said = text_;
         saidAt = at;
+        told = told_;
+        toldAt = toldAt_;
         break;
     }
     if (!best) return null;
@@ -392,7 +415,14 @@ function die(message, code = 1) {
     throw e;
 }
 
-async function api(path, { method = 'GET', body, cfg } = {}) {
+/**
+ * `raw: true` returns the response BODY AS TEXT instead of parsed JSON.
+ *
+ * One caller: `cc update`, fetching `/api/agent/cc.mjs`, which serves JavaScript. Everything else here
+ * speaks JSON and the default refuses anything that is not — a rule worth keeping, because "the hub
+ * returned something that is not JSON" is how a sign-in page pretending to be an API gets caught.
+ */
+async function api(path, { method = 'GET', body, cfg, raw = false } = {}) {
     if (!cfg.url || !cfg.token) {
         die(
             'not configured.\n\n' +
@@ -430,6 +460,7 @@ async function api(path, { method = 'GET', body, cfg } = {}) {
         }
         die(`HTTP ${res.status}: ${detail}`);
     }
+    if (raw) return text;
     if (!json) die(`the hub returned something that is not JSON:\n${text.slice(0, 300)}`);
     return json;
 }
@@ -555,6 +586,70 @@ const cfg = config();
 
 async function main() {
 switch (cmd) {
+    /*
+     * ==========================================================================================
+     * REPLACE THIS FILE WITH THE ONE THE HUB SERVES. One command, because two was one too many.
+     * ==========================================================================================
+     *
+     * THE FAILURE THIS EXISTS FOR HAPPENED TWICE IN ONE DAY, to the person who wrote the fix both times.
+     *
+     * The hub serves its own CLI so the two cannot drift — and the download is a COPY from then on. A
+     * phantom project called `reports` was diagnosed and fixed and pushed; the machine kept inventing
+     * phantoms, because the copy at `~/.command-center/cc.mjs` had been downloaded an hour before the fix
+     * existed. A second phantom, `deliverables`, appeared from the same stale copy while the repaired
+     * version sat in the repository and on the hub.
+     *
+     * The version handshake tells you. Telling you is not enough when the remedy is a `curl` with a header,
+     * a token and an output path — three things to get right, at the moment you are annoyed. So:
+     *
+     *   cc update        replace this file with what the hub serves
+     *
+     * IT USES THE CONFIG THAT IS ALREADY THERE, which is the whole reason it is shorter than the curl: the
+     * hub URL and the token are in `~/.command-center/config.json` already, so there is nothing to paste.
+     *
+     * WRITTEN VIA A TEMPORARY FILE AND RENAMED, never truncated in place. This program is running FROM the
+     * file it is replacing; a half-written `cc.mjs` is a machine whose every hook is broken, and a rename
+     * is the one operation that cannot leave that state behind.
+     *
+     * IT REFUSES TO WRITE SOMETHING THAT IS NOT THE CLI. A hub behind a login page answers a `curl` with
+     * HTML and a 200, and overwriting a working CLI with a sign-in page is a way to lose every hook on the
+     * machine to something that looked like success.
+     */
+    case 'update': {
+        const target = join(CONFIG_DIR, 'cc.mjs');
+        const source = await api('/api/agent/cc.mjs', { cfg, raw: true });
+
+        if (!/^#!\/usr\/bin\/env node/.test(source) || !/^const CLI_VERSION = \d+;/m.test(source)) {
+            die(`what ${cfg.url} served does not look like the CLI (${source.length} bytes, starting `
+                + `"${source.slice(0, 40).replace(/\n/g, ' ')}"). Nothing was written.`);
+        }
+        const theirs = Number(/^const CLI_VERSION = (\d+);/m.exec(source)[1]);
+
+        mkdirSync(CONFIG_DIR, { recursive: true });
+        const tmp = `${target}.new-${process.pid}`;
+        writeFileSync(tmp, source);
+        /* Verified by READING IT BACK, like every write this project makes, and before the rename rather
+         * than after — the point is to never put a file at the live path that has not been checked. */
+        const back = readFileSync(tmp, 'utf8');
+        if (back !== source) {
+            die(`wrote ${tmp} but it read back different (${back.length} vs ${source.length} bytes). `
+                + 'The live CLI was left alone.');
+        }
+        const { renameSync } = await import('node:fs');
+        renameSync(tmp, target);
+
+        process.stdout.write(
+            `cc updated: ${CLI_VERSION} → ${theirs}  (${target})\n`
+            + (theirs === CLI_VERSION
+                ? '  Already current; the file was replaced with an identical one.\n'
+                : '  Run "cc presence on" in each project folder that has it — hooks are written by the '
+                  + 'CLI, so an old settings file keeps the old set until it is rewritten.\n')
+            + '  A session that is already running keeps its old hooks until it restarts. "cc sync" '
+            + 'catches the hub up in the meantime.\n',
+        );
+        break;
+    }
+
     case 'setup': {
         const [url, token] = positional;
         if (!url || !token) die('usage: cc setup https://<your-hub>.vercel.app <agent-token>');
@@ -1952,6 +2047,7 @@ switch (cmd) {
             `  cc drop <task-id>          withdraw a task\n` +
             `  cc health                  is the hub working\n` +
             `  cc setup <url> <token>     configure this machine\n` +
+            `  cc update                  replace this CLI with the one your hub serves\n` +
             `\n  Opt-in, per project, run in the project folder:\n` +
             `  cc presence on|off         activity hooks — what is running, and what it just said
                              (--no-words sends activity but never message text)\n` +

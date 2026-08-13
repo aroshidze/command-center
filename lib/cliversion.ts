@@ -61,9 +61,19 @@ export const CLI_VERSION = 4;
  * Built here rather than in the route so the CLI, `/api/health` and any future surface say the same thing.
  */
 export function cliStaleAdvice(hub: string): string {
+    /*
+     * `cc update` RATHER THAN THE CURL, and that change is the whole lesson of the day this was written.
+     *
+     * The advice used to be a `curl` with a bearer header, a URL and an output path. Telling somebody is not
+     * enough when the remedy is three things to get right at the moment they are annoyed: the fix for the
+     * phantom-project bug sat on the hub for an hour while the machine kept inventing phantoms, because
+     * nobody re-ran the curl. `cc update` needs no arguments — the hub and the token are already in the
+     * config it reads.
+     *
+     * The hub URL is still interpolated, for the reader who wants to know where the file comes from.
+     */
     return 'The CLI on this machine is older than the hub. Two commands, in this order:\n'
-        + `  1. curl -fsSL -H "Authorization: Bearer <your agent token>" ${hub}/api/agent/cc.mjs `
-        + '-o "$HOME/.command-center/cc.mjs"\n'
+        + `  1. node "$HOME/.command-center/cc.mjs" update        (pulls it from ${hub})\n`
         + '  2. node "$HOME/.command-center/cc.mjs" presence on   (in each project folder that has it — '
         + 'the hooks are written by the CLI, so an old settings file stays old)';
 }
