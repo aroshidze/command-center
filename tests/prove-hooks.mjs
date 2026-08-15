@@ -378,6 +378,35 @@ await check('a hook fired from a SUBFOLDER reports the project, not the subfolde
     return `fired from tests/shots and reported "${body.project}"`;
 });
 
+await check('the CLI has exactly the subcommands and hooks the hub thinks it has', async () => {
+    /*
+     * THE GUARD ON A HAND-BUMPED NUMBER, and it exists because the number was not bumped.
+     *
+     * `cc brief` shipped without a version change, so the hub and every machine both said 4, agreed with
+     * each other, and were missing a command. A handshake that reports "current" while it is wrong is worse
+     * than no handshake, because it is believed.
+     *
+     * A hash of the file would fail on comment edits and be disabled within a week. What a hub depends on is
+     * the SURFACE — which subcommands exist, and which hooks `presence on` writes — so that is what is
+     * recorded in lib/cliversion.ts and what this compares.
+     */
+    const { CLI_SURFACE } = await import('../lib/cliversion.ts');
+    const src = readFileSync(CLI, 'utf8');
+
+    const found = [...new Set([...src.matchAll(/^ {4}case '([a-z-]+)':/gm)].map(m => m[1]))].sort();
+    eq(found, [...CLI_SURFACE.subcommands].sort(),
+        'the subcommands in cli/cc.mjs. Bump CLI_VERSION, then update CLI_SURFACE in lib/cliversion.ts');
+
+    const hooks = [...new Set([
+        ...[...src.matchAll(/event: '([A-Za-z]+)', (?:matcher: [A-Z_]+, )?sub: '([a-z]+)'/g)],
+        ...[...src.matchAll(/\{ event: '([A-Za-z]+)', sub: '([a-z]+)'/g)],
+    ].map(m => `${m[1]}:${m[2]}`))].sort();
+    eq(hooks, [...CLI_SURFACE.hooks].sort(),
+        'the hooks cli/cc.mjs installs. Bump CLI_VERSION, then update CLI_SURFACE in lib/cliversion.ts');
+
+    return `${found.length} subcommands and ${hooks.length} hooks, matching what the hub expects`;
+});
+
 await check('the CLI and the hub declare the SAME version, or the staleness warning is a lie', async () => {
     /*
      * ONE NUMBER, TWO FILES, AND THAT IS THE HAZARD. `cli/cc.mjs` may not import anything — zero

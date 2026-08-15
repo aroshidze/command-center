@@ -81,7 +81,7 @@ const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
  *
  * BUMP IT when this file gains something a hub relies on: a subcommand, a hook, a changed payload.
  */
-const CLI_VERSION = 4;
+const CLI_VERSION = 5;
 
 /**
  * ==================================================================================================

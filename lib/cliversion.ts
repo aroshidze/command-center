@@ -48,8 +48,42 @@
  *      exists because hooks cannot solve the problem it solves: Claude Code reads a project's hooks when a
  *      session starts, so a session already running when they were installed can never report, and sessions
  *      here live for days. A CLI at 3 leaves such a project looking abandoned while somebody works in it.
+ *   5  15 August 2026. `cc brief` — where a project stands, filed by the agent that did the work. Bumped
+ *      LATE, and that is the entry worth reading: the command shipped at version 4 and the handshake
+ *      therefore told every machine it was current while `cc brief` was missing from all of them. See
+ *      `CLI_SURFACE` below, which exists so that cannot happen again.
  */
-export const CLI_VERSION = 4;
+export const CLI_VERSION = 5;
+
+/**
+ * ==================================================================================================
+ * EVERY SUBCOMMAND AND HOOK THE CLI HAS. Recorded here so a forgotten bump is a failing check.
+ * ==================================================================================================
+ *
+ * THE VERSION HANDSHAKE HAS ONE WEAKNESS AND IT FOUND IT WITHIN A DAY: the number is bumped by hand, and
+ * I did not bump it when `cc brief` was added. So the hub and every machine both reported version 4,
+ * agreed with each other, and were missing a command — which is worse than no handshake at all, because a
+ * check that says "current" is believed.
+ *
+ * A hash of the whole file would fail on every comment edit and be turned off within a week. What a hub
+ * actually depends on is the SURFACE: which subcommands exist and which hooks `presence on` writes. So
+ * that is what is recorded, `tests/prove-hooks.mjs` asserts the file still matches, and the failure
+ * message says what to do — bump the version, then update this list.
+ *
+ * Sorted, so a diff is about what changed rather than where it was inserted.
+ */
+export const CLI_SURFACE = {
+    subcommands: [
+        'approvals', 'ask', 'backfill', 'brief', 'drop', 'health', 'heartbeat', 'onboard', 'permission',
+        'presence', 'report', 'repush', 'setup', 'spend', 'subagent', 'sync', 'task', 'update', 'wait',
+    ],
+    /** `<event>:<subcommand>` for every hook `cc presence on` and `cc approvals on` install. */
+    hooks: [
+        'Notification:report', 'PermissionRequest:permission', 'PostToolUse:subagent',
+        'PostToolUseFailure:subagent', 'PreToolUse:subagent', 'SessionEnd:heartbeat',
+        'SessionStart:heartbeat', 'Stop:report', 'SubagentStop:subagent', 'UserPromptSubmit:report',
+    ],
+};
 
 /**
  * What a hub tells an agent whose CLI is older than it expects.
